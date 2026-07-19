@@ -1,0 +1,41 @@
+[gd_scene format=3 uid="uid://7khjbuhpus3q"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_kh8mj"]
+albedo_color = Color(0.6360073, 0.44628012, 0.16186985, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_km2js"]
+material = SubResource("StandardMaterial3D_kh8mj")
+size = Vector3(0.5, 2, 0.5)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_ixioq"]
+size = Vector3(0.5, 2, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_emxwr"]
+albedo_color = Color(0.25684345, 0.575662, 2.5027991e-06, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_kh8mj"]
+material = SubResource("StandardMaterial3D_emxwr")
+size = Vector3(2, 2, 2)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_bw56o"]
+size = Vector3(2, 2, 2)
+
+[node name="Tree" type="Node3D" unique_id=716898628]
+
+[node name="Trunk" type="MeshInstance3D" parent="." unique_id=656773874]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+mesh = SubResource("BoxMesh_km2js")
+
+[node name="StaticBody3D" type="StaticBody3D" parent="Trunk" unique_id=559814946]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Trunk/StaticBody3D" unique_id=1111123688]
+shape = SubResource("BoxShape3D_ixioq")
+
+[node name="Leaves" type="MeshInstance3D" parent="." unique_id=513447917]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.5, 0)
+mesh = SubResource("BoxMesh_kh8mj")
+
+[node name="StaticBody3D" type="StaticBody3D" parent="Leaves" unique_id=298191802]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Leaves/StaticBody3D" unique_id=1405201480]
+shape = SubResource("BoxShape3D_bw56o")

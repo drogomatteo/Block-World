@@ -1,0 +1,23 @@
+# Cache généré par Godot 4+ (imports, shaders compilés, etc.) — jamais versionné
+.godot/
+*.translation
+
+# Dossiers générés par les exports
+/android/
+/build/
+/export/
+*.pck
+*.zip
+*.exe
+*.apk
+
+# Presets d'export (contiennent parfois des clés/keystores)
+export_presets.cfg
+
+# Réglages locaux Claude Code (propres à cette machine)
+.claude/settings.local.json
+
+# Fichiers systèmes / éditeurs
+.DS_Store
+*~
+*.swp

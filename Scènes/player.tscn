@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://dxhyh0a3e2obk"]
+
+[ext_resource type="Script" uid="uid://cia215nghxvr4" path="res://Scripts/player.gd" id="1_cjaot"]
+
+[node name="Player" type="CharacterBody3D"]
+script = ExtResource("1_cjaot")
