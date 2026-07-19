@@ -19,8 +19,53 @@ func _initialize() -> void:
 	_run()
 
 func _run() -> void:
-	var ws := load("res://Scènes/world.tscn") as PackedScene
+	var ws := load("res://Scènes/Monde/world.tscn") as PackedScene
 	check(ws != null, "world.tscn se charge")
+
+	# --- Chaque brique du jeu a sa scène, avec ses presets dans le .tscn ---
+	for cid in ["warrior", "ranger", "mage", "rogue"]:
+		var cs := load("res://Scènes/Acteurs/%s.tscn" % cid) as PackedScene
+		var ci = cs.instantiate() if cs != null else null
+		check(ci != null and ci.class_id == cid, "scène de classe %s (class_id préréglé)" % cid)
+		if ci != null:
+			ci.free()
+	for tid in ["slime", "scout", "brute", "archer"]:
+		var es := load("res://Scènes/Acteurs/%s.tscn" % tid) as PackedScene
+		var ei = es.instantiate() if es != null else null
+		check(ei != null and ei.type_id == tid, "scène d'ennemi %s (type_id préréglé)" % tid)
+		if ei != null:
+			ei.free()
+	for sp in ["Monde/terrain_gen", "Monde/chunk", "Monde/day_night", "Monde/tree",
+			"UI/ui", "UI/main_menu", "UI/options_menu", "UI/inventory_ui",
+			"Objets/pickup", "Objets/projectile", "Objets/items"]:
+		check(load("res://Scènes/%s.tscn" % sp) != null, "la scène %s.tscn se charge" % sp)
+
+	# --- Les scènes d'acteurs contiennent le MODÈLE et les ANIMATIONS ---
+	var wi = (load("res://Scènes/Acteurs/warrior.tscn") as PackedScene).instantiate()
+	check(wi.get_node_or_null("Model/RollCenter/ArmR/Weapon") != null, "le guerrier de la scène porte son arme")
+	var wanim: AnimationPlayer = wi.get_node("Anim")
+	for an in ["walk", "idle", "swim_move", "swim_idle", "roll"]:
+		check(wanim.has_animation(an), "clip '%s' du joueur dans la scène" % an)
+	check((wi.get_node("GearAnim") as AnimationPlayer).has_animation("attack"), "clip 'attack' de l'arme dans la scène")
+	# La nage : les bras pagaient en aller-retour (amplitude bornée), plus de
+	# moulinet à tour complet (l'ancien bug des « bras d'hélice »).
+	var swim_anim: Animation = wanim.get_animation("swim_move")
+	var arm_max := 0.0
+	for ti in swim_anim.get_track_count():
+		if String(swim_anim.track_get_path(ti)).contains("ArmL"):
+			for k in swim_anim.track_get_key_count(ti):
+				arm_max = maxf(arm_max, absf(swim_anim.track_get_key_value(ti, k)))
+	check(arm_max > 0.5 and arm_max < 1.5, "nage : bras en aller-retour (amplitude %.2f, pas de tour complet)" % arm_max)
+	wi.free()
+	var ai = (load("res://Scènes/Acteurs/archer.tscn") as PackedScene).instantiate()
+	check(ai.get_node_or_null("Model/RollCenter/ArmL/Bow") != null, "l'archer de la scène affiche son arc")
+	check((ai.get_node("Anim") as AnimationPlayer).has_animation("walk"), "clip 'walk' de l'ennemi dans la scène")
+	check((ai.get_node("GearAnim") as AnimationPlayer).has_animation("draw"), "clip 'draw' (recul d'arc) dans la scène")
+	ai.free()
+	var si = (load("res://Scènes/Acteurs/slime.tscn") as PackedScene).instantiate()
+	check(si.get_node_or_null("Model/Body") != null, "le slime de la scène affiche son corps")
+	si.free()
+
 	var world = ws.instantiate()
 	root.add_child(world)
 	await process_frame
@@ -29,6 +74,11 @@ func _run() -> void:
 	# --- Menu principal + persistance des profils ---
 	check(world._menu != null, "le menu principal est affiché au lancement")
 	check(world.gen == null, "pas de génération avant le choix d'un monde")
+	# Les widgets viennent des scènes UI (plus construits en code).
+	check(world._menu.find_child("PlayBtn") != null, "bouton Jouer dans la scène du menu")
+	check(world._menu.find_child("SeedEdit") != null, "champ Graine dans la scène du menu")
+	check(world._options.find_child("VolumeSlider") != null, "curseur Volume dans la scène des options")
+	check(world._options.find_child("ResBtn") != null, "liste des résolutions dans la scène des options")
 	var test_ch: Dictionary = MainMenu.create_character("__smoke__", "warrior")
 	check(test_ch.has("key"), "création d'un personnage persisté")
 	var listed := MainMenu.list_characters().filter(func(c): return c["key"] == test_ch["key"])
@@ -212,8 +262,7 @@ func _run() -> void:
 		await physics_frame
 
 	# --- Ennemis : archétypes, corps, agilité ---
-	var slime := Enemy.new()
-	slime.type_id = "slime"
+	var slime := (load("res://Scènes/Acteurs/slime.tscn") as PackedScene).instantiate() as Enemy
 	world.add_child(slime)
 	slime.global_position = player.global_position + Vector3(2, 1, 0)
 	await process_frame
@@ -223,8 +272,7 @@ func _run() -> void:
 	slime.take_damage(10, player.global_position)
 	check(slime.health == hp_before - 10, "l'ennemi encaisse des dégâts")
 
-	var scout := Enemy.new()
-	scout.type_id = "scout"
+	var scout := (load("res://Scènes/Acteurs/scout.tscn") as PackedScene).instantiate() as Enemy
 	world.add_child(scout)
 	scout.global_position = player.global_position + Vector3(-2, 1, 0)
 	await process_frame

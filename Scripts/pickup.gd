@@ -12,8 +12,8 @@ const MAGNET_SPEED := 9.0
 const LIFETIME := 25.0
 const ITEM_LIFETIME := 60.0 # l'équipement reste plus longtemps au sol
 
-var kind := Kind.XP
-var amount := 10
+@export var kind: Kind = Kind.XP
+@export var amount := 10
 var item := {} # objet généré par Items.roll_item si kind == ITEM
 
 var _mesh: MeshInstance3D

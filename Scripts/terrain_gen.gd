@@ -1,7 +1,10 @@
 class_name TerrainGen
-extends RefCounted
+extends Node
 
 # Génération procédurale DÉTERMINISTE : tout dépend uniquement de (world_seed, x, z).
+# Instancié depuis Scènes/Monde/terrain_gen.tscn par world.gd, qui appelle
+# setup(seed) avant toute utilisation (une scène ne peut pas passer d'argument
+# au constructeur). Le nœud vit sous World : visible dans l'arbre distant.
 # C'est volontaire — un jour, en multijoueur, il suffira de partager le seed pour que
 # tous les joueurs génèrent exactement le même monde sans transférer le terrain.
 #
@@ -22,7 +25,7 @@ var world_seed: int
 var height_noise: FastNoiseLite
 var biome_noise: FastNoiseLite
 
-func _init(seed_value: int) -> void:
+func setup(seed_value: int) -> void:
 	world_seed = seed_value
 
 	height_noise = FastNoiseLite.new()

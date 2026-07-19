@@ -1,0 +1,524 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://Scripts/enemy.gd" id="1_n5b4w"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_076xu"]
+radius = 0.525
+height = 2.1
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ltrvh"]
+albedo_color = Color(0.4, 0.11, 0.1, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_ys6b4"]
+material = SubResource("StandardMaterial3D_ltrvh")
+size = Vector3(0.294, 0.7875, 0.315)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_fmphg"]
+albedo_color = Color(0.4, 0.11, 0.1, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_hhkhs"]
+material = SubResource("StandardMaterial3D_fmphg")
+size = Vector3(0.294, 0.7875, 0.315)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_s61du"]
+albedo_color = Color(0.8, 0.22, 0.2, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_0h3t2"]
+material = SubResource("StandardMaterial3D_s61du")
+size = Vector3(0.8925, 0.7875, 0.525)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_4xql1"]
+albedo_color = Color(0.64000005, 0.176, 0.16000001, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_bqu6l"]
+material = SubResource("StandardMaterial3D_4xql1")
+size = Vector3(0.336, 0.735, 0.357)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_14cb0"]
+albedo_color = Color(0.48000002, 0.132, 0.120000005, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_u2dvn"]
+material = SubResource("StandardMaterial3D_14cb0")
+size = Vector3(0.399, 0.147, 0.399)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_xpigk"]
+albedo_color = Color(0.85, 0.72, 0.6, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_na68k"]
+material = SubResource("StandardMaterial3D_xpigk")
+size = Vector3(0.315, 0.252, 0.336)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_mw6ti"]
+albedo_color = Color(0.64000005, 0.176, 0.16000001, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_xnfie"]
+material = SubResource("StandardMaterial3D_mw6ti")
+size = Vector3(0.336, 0.735, 0.357)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_3tyy7"]
+albedo_color = Color(0.48000002, 0.132, 0.120000005, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_hsisr"]
+material = SubResource("StandardMaterial3D_3tyy7")
+size = Vector3(0.399, 0.147, 0.399)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1s42m"]
+albedo_color = Color(0.85, 0.72, 0.6, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_ku67v"]
+material = SubResource("StandardMaterial3D_1s42m")
+size = Vector3(0.315, 0.252, 0.336)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_2bfu6"]
+albedo_color = Color(0.83, 0.337, 0.32, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_nahfm"]
+material = SubResource("StandardMaterial3D_2bfu6")
+size = Vector3(0.63, 0.63, 0.63)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_afsl6"]
+albedo_color = Color(0.05, 0.05, 0.05, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_jf2sf"]
+material = SubResource("StandardMaterial3D_afsl6")
+size = Vector3(0.1365, 0.1575, 0.03)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_fho75"]
+albedo_color = Color(0.05, 0.05, 0.05, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_o1fob"]
+material = SubResource("StandardMaterial3D_fho75")
+size = Vector3(0.1365, 0.1575, 0.03)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_6wsbe"]
+albedo_color = Color(0.15, 0.05, 0.05, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_h3u4f"]
+material = SubResource("StandardMaterial3D_6wsbe")
+size = Vector3(0.21, 0.0735, 0.04)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_i8oiq"]
+albedo_color = Color(0.15, 0.05, 0.05, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_7eyjt"]
+material = SubResource("StandardMaterial3D_i8oiq")
+size = Vector3(0.21, 0.0735, 0.04)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ibv2u"]
+albedo_color = Color(0.95, 0.92, 0.85, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_a6q78"]
+material = SubResource("StandardMaterial3D_ibv2u")
+size = Vector3(0.0945, 0.168, 0.05)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_mi5if"]
+albedo_color = Color(0.95, 0.92, 0.85, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_ktkpb"]
+material = SubResource("StandardMaterial3D_mi5if")
+size = Vector3(0.0945, 0.168, 0.05)
+
+[sub_resource type="Animation" id="Animation_diqia"]
+length = 0.001
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("Model/RollCenter/LegL:rotation:x")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [0.0]
+}
+tracks/1/type = "value"
+tracks/1/imported = false
+tracks/1/enabled = true
+tracks/1/path = NodePath("Model/RollCenter/LegR:rotation:x")
+tracks/1/interp = 1
+tracks/1/loop_wrap = true
+tracks/1/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [0.0]
+}
+tracks/2/type = "value"
+tracks/2/imported = false
+tracks/2/enabled = true
+tracks/2/path = NodePath("Model/RollCenter/ArmL:rotation:x")
+tracks/2/interp = 1
+tracks/2/loop_wrap = true
+tracks/2/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [0.0]
+}
+tracks/3/type = "value"
+tracks/3/imported = false
+tracks/3/enabled = true
+tracks/3/path = NodePath("Model/RollCenter/ArmR:rotation:x")
+tracks/3/interp = 1
+tracks/3/loop_wrap = true
+tracks/3/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [0.0]
+}
+tracks/4/type = "value"
+tracks/4/imported = false
+tracks/4/enabled = true
+tracks/4/path = NodePath("Model/RollCenter:rotation:x")
+tracks/4/interp = 1
+tracks/4/loop_wrap = true
+tracks/4/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [0.0]
+}
+
+[sub_resource type="Animation" id="Animation_35u3g"]
+length = 0.25
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("Model/RollCenter/LegL:rotation:x")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [0.0]
+}
+tracks/1/type = "value"
+tracks/1/imported = false
+tracks/1/enabled = true
+tracks/1/path = NodePath("Model/RollCenter/LegR:rotation:x")
+tracks/1/interp = 1
+tracks/1/loop_wrap = true
+tracks/1/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [0.0]
+}
+tracks/2/type = "value"
+tracks/2/imported = false
+tracks/2/enabled = true
+tracks/2/path = NodePath("Model/RollCenter/ArmL:rotation:x")
+tracks/2/interp = 1
+tracks/2/loop_wrap = true
+tracks/2/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [0.0]
+}
+tracks/3/type = "value"
+tracks/3/imported = false
+tracks/3/enabled = true
+tracks/3/path = NodePath("Model/RollCenter/ArmR:rotation:x")
+tracks/3/interp = 1
+tracks/3/loop_wrap = true
+tracks/3/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [0.0]
+}
+
+[sub_resource type="Animation" id="Animation_8sens"]
+length = 0.4
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("Model/RollCenter:rotation:x")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0, 0.4),
+"transitions": PackedFloat32Array(1, 1),
+"update": 0,
+"values": [0.0, -6.283185307179586]
+}
+tracks/1/type = "value"
+tracks/1/imported = false
+tracks/1/enabled = true
+tracks/1/path = NodePath("Model/RollCenter/LegL:rotation:x")
+tracks/1/interp = 1
+tracks/1/loop_wrap = true
+tracks/1/keys = {
+"times": PackedFloat32Array(0.08),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [1.2]
+}
+tracks/2/type = "value"
+tracks/2/imported = false
+tracks/2/enabled = true
+tracks/2/path = NodePath("Model/RollCenter/LegR:rotation:x")
+tracks/2/interp = 1
+tracks/2/loop_wrap = true
+tracks/2/keys = {
+"times": PackedFloat32Array(0.08),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [1.2]
+}
+tracks/3/type = "value"
+tracks/3/imported = false
+tracks/3/enabled = true
+tracks/3/path = NodePath("Model/RollCenter/ArmL:rotation:x")
+tracks/3/interp = 1
+tracks/3/loop_wrap = true
+tracks/3/keys = {
+"times": PackedFloat32Array(0.08),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [1.2]
+}
+tracks/4/type = "value"
+tracks/4/imported = false
+tracks/4/enabled = true
+tracks/4/path = NodePath("Model/RollCenter/ArmR:rotation:x")
+tracks/4/interp = 1
+tracks/4/loop_wrap = true
+tracks/4/keys = {
+"times": PackedFloat32Array(0.08),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [1.2]
+}
+
+[sub_resource type="Animation" id="Animation_rewf1"]
+length = 4.1887902047863905
+loop_mode = 1
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("Model/RollCenter/ArmL:rotation:x")
+tracks/0/interp = 2
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0, 0.17453292, 0.34906584, 0.5235988, 0.6981317, 0.87266463, 1.0471976, 1.2217305, 1.3962634, 1.5707964, 1.7453293, 1.9198622, 2.0943952, 2.268928, 2.443461, 2.6179938, 2.7925267, 2.9670596, 3.1415927, 3.3161256, 3.4906585, 3.6651914, 3.8397243, 4.0142574, 4.1887903),
+"transitions": PackedFloat32Array(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
+"update": 0,
+"values": [0.0, 0.23293714059226867, 0.44999999999999996, 0.6363961030678927, 0.7794228634059948, 0.8693332436601614, 0.9, 0.8693332436601615, 0.7794228634059949, 0.6363961030678928, 0.4500000000000003, 0.23293714059226892, 1.1021821192326179e-16, -0.23293714059226833, -0.44999999999999973, -0.6363961030678924, -0.7794228634059945, -0.8693332436601613, -0.9, -0.8693332436601616, -0.7794228634059952, -0.636396103067893, -0.4500000000000004, -0.2329371405922686, -2.2043642384652358e-16]
+}
+tracks/1/type = "value"
+tracks/1/imported = false
+tracks/1/enabled = true
+tracks/1/path = NodePath("Model/RollCenter/ArmR:rotation:x")
+tracks/1/interp = 2
+tracks/1/loop_wrap = true
+tracks/1/keys = {
+"times": PackedFloat32Array(0, 0.17453292, 0.34906584, 0.5235988, 0.6981317, 0.87266463, 1.0471976, 1.2217305, 1.3962634, 1.5707964, 1.7453293, 1.9198622, 2.0943952, 2.268928, 2.443461, 2.6179938, 2.7925267, 2.9670596, 3.1415927, 3.3161256, 3.4906585, 3.6651914, 3.8397243, 4.0142574, 4.1887903),
+"transitions": PackedFloat32Array(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
+"update": 0,
+"values": [0.0, -0.23293714059226867, -0.44999999999999996, -0.6363961030678927, -0.7794228634059948, -0.8693332436601614, -0.9, -0.8693332436601615, -0.7794228634059949, -0.6363961030678928, -0.4500000000000003, -0.23293714059226892, -1.1021821192326179e-16, 0.23293714059226833, 0.44999999999999973, 0.6363961030678924, 0.7794228634059945, 0.8693332436601613, 0.9, 0.8693332436601616, 0.7794228634059952, 0.636396103067893, 0.4500000000000004, 0.2329371405922686, 2.2043642384652358e-16]
+}
+tracks/2/type = "value"
+tracks/2/imported = false
+tracks/2/enabled = true
+tracks/2/path = NodePath("Model/RollCenter/LegL:rotation:x")
+tracks/2/interp = 2
+tracks/2/loop_wrap = true
+tracks/2/keys = {
+"times": PackedFloat32Array(0, 0.17453292, 0.34906584, 0.5235988, 0.6981317, 0.87266463, 1.0471976, 1.2217305, 1.3962634, 1.5707964, 1.7453293, 1.9198622, 2.0943952, 2.268928, 2.443461, 2.6179938, 2.7925267, 2.9670596, 3.1415927, 3.3161256, 3.4906585, 3.6651914, 3.8397243, 4.0142574, 4.1887903),
+"transitions": PackedFloat32Array(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
+"update": 0,
+"values": [0.0, 0.19999999999999998, 0.34641016151377546, 0.4, 0.3464101615137755, 0.20000000000000015, 4.898587196589413e-17, -0.1999999999999999, -0.34641016151377535, -0.4, -0.3464101615137756, -0.20000000000000018, -9.797174393178826e-17, 0.19999999999999973, 0.34641016151377535, 0.4, 0.3464101615137757, 0.20000000000000054, 1.4695761589768238e-16, -0.19999999999999968, -0.34641016151377513, -0.4, -0.3464101615137757, -0.19999999999999996, -1.9594348786357652e-16]
+}
+tracks/3/type = "value"
+tracks/3/imported = false
+tracks/3/enabled = true
+tracks/3/path = NodePath("Model/RollCenter/LegR:rotation:x")
+tracks/3/interp = 2
+tracks/3/loop_wrap = true
+tracks/3/keys = {
+"times": PackedFloat32Array(0, 0.17453292, 0.34906584, 0.5235988, 0.6981317, 0.87266463, 1.0471976, 1.2217305, 1.3962634, 1.5707964, 1.7453293, 1.9198622, 2.0943952, 2.268928, 2.443461, 2.6179938, 2.7925267, 2.9670596, 3.1415927, 3.3161256, 3.4906585, 3.6651914, 3.8397243, 4.0142574, 4.1887903),
+"transitions": PackedFloat32Array(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
+"update": 0,
+"values": [0.0, -0.19999999999999998, -0.34641016151377546, -0.4, -0.3464101615137755, -0.20000000000000015, -4.898587196589413e-17, 0.1999999999999999, 0.34641016151377535, 0.4, 0.3464101615137756, 0.20000000000000018, 9.797174393178826e-17, -0.19999999999999973, -0.34641016151377535, -0.4, -0.3464101615137757, -0.20000000000000054, -1.4695761589768238e-16, 0.19999999999999968, 0.34641016151377513, 0.4, 0.3464101615137757, 0.19999999999999996, 1.9594348786357652e-16]
+}
+
+[sub_resource type="Animation" id="Animation_fyo14"]
+length = 6.283185307179586
+loop_mode = 1
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("Model/RollCenter/LegL:rotation:x")
+tracks/0/interp = 2
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0, 0.2617994, 0.5235988, 0.7853982, 1.0471976, 1.3089969, 1.5707964, 1.8325957, 2.0943952, 2.3561945, 2.6179938, 2.8797932, 3.1415927, 3.403392, 3.6651914, 3.9269907, 4.1887903, 4.4505897, 4.712389, 4.9741883, 5.2359877, 5.497787, 5.7595863, 6.021386, 6.2831855),
+"transitions": PackedFloat32Array(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
+"update": 0,
+"values": [0.0, 0.15529142706151244, 0.29999999999999993, 0.42426406871192845, 0.5196152422706631, 0.579555495773441, 0.6, 0.579555495773441, 0.5196152422706632, 0.4242640687119285, 0.29999999999999993, 0.1552914270615126, 7.347880794884119e-17, -0.15529142706151247, -0.2999999999999998, -0.4242640687119283, -0.519615242270663, -0.579555495773441, -0.6, -0.579555495773441, -0.5196152422706631, -0.4242640687119286, -0.30000000000000027, -0.15529142706151294, -1.4695761589768238e-16]
+}
+tracks/1/type = "value"
+tracks/1/imported = false
+tracks/1/enabled = true
+tracks/1/path = NodePath("Model/RollCenter/LegR:rotation:x")
+tracks/1/interp = 2
+tracks/1/loop_wrap = true
+tracks/1/keys = {
+"times": PackedFloat32Array(0, 0.2617994, 0.5235988, 0.7853982, 1.0471976, 1.3089969, 1.5707964, 1.8325957, 2.0943952, 2.3561945, 2.6179938, 2.8797932, 3.1415927, 3.403392, 3.6651914, 3.9269907, 4.1887903, 4.4505897, 4.712389, 4.9741883, 5.2359877, 5.497787, 5.7595863, 6.021386, 6.2831855),
+"transitions": PackedFloat32Array(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
+"update": 0,
+"values": [0.0, -0.15529142706151244, -0.29999999999999993, -0.42426406871192845, -0.5196152422706631, -0.579555495773441, -0.6, -0.579555495773441, -0.5196152422706632, -0.4242640687119285, -0.29999999999999993, -0.1552914270615126, -7.347880794884119e-17, 0.15529142706151247, 0.2999999999999998, 0.4242640687119283, 0.519615242270663, 0.579555495773441, 0.6, 0.579555495773441, 0.5196152422706631, 0.4242640687119286, 0.30000000000000027, 0.15529142706151294, 1.4695761589768238e-16]
+}
+tracks/2/type = "value"
+tracks/2/imported = false
+tracks/2/enabled = true
+tracks/2/path = NodePath("Model/RollCenter/ArmL:rotation:x")
+tracks/2/interp = 2
+tracks/2/loop_wrap = true
+tracks/2/keys = {
+"times": PackedFloat32Array(0, 0.2617994, 0.5235988, 0.7853982, 1.0471976, 1.3089969, 1.5707964, 1.8325957, 2.0943952, 2.3561945, 2.6179938, 2.8797932, 3.1415927, 3.403392, 3.6651914, 3.9269907, 4.1887903, 4.4505897, 4.712389, 4.9741883, 5.2359877, 5.497787, 5.7595863, 6.021386, 6.2831855),
+"transitions": PackedFloat32Array(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
+"update": 0,
+"values": [0.0, -0.09317485623690747, -0.17999999999999997, -0.2545584412271571, -0.31176914536239786, -0.34773329746406456, -0.36, -0.34773329746406456, -0.3117691453623979, -0.2545584412271571, -0.17999999999999997, -0.09317485623690756, -4.4087284769304716e-17, 0.09317485623690748, 0.17999999999999988, 0.254558441227157, 0.3117691453623978, 0.34773329746406456, 0.36, 0.3477332974640646, 0.31176914536239786, 0.25455844122715715, 0.18000000000000016, 0.09317485623690776, 8.817456953860943e-17]
+}
+tracks/3/type = "value"
+tracks/3/imported = false
+tracks/3/enabled = true
+tracks/3/path = NodePath("Model/RollCenter/ArmR:rotation:x")
+tracks/3/interp = 2
+tracks/3/loop_wrap = true
+tracks/3/keys = {
+"times": PackedFloat32Array(0, 0.2617994, 0.5235988, 0.7853982, 1.0471976, 1.3089969, 1.5707964, 1.8325957, 2.0943952, 2.3561945, 2.6179938, 2.8797932, 3.1415927, 3.403392, 3.6651914, 3.9269907, 4.1887903, 4.4505897, 4.712389, 4.9741883, 5.2359877, 5.497787, 5.7595863, 6.021386, 6.2831855),
+"transitions": PackedFloat32Array(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
+"update": 0,
+"values": [0.0, 0.09317485623690747, 0.17999999999999997, 0.2545584412271571, 0.31176914536239786, 0.34773329746406456, 0.36, 0.34773329746406456, 0.3117691453623979, 0.2545584412271571, 0.17999999999999997, 0.09317485623690756, 4.4087284769304716e-17, -0.09317485623690748, -0.17999999999999988, -0.254558441227157, -0.3117691453623978, -0.34773329746406456, -0.36, -0.3477332974640646, -0.31176914536239786, -0.25455844122715715, -0.18000000000000016, -0.09317485623690776, -8.817456953860943e-17]
+}
+
+[sub_resource type="AnimationLibrary" id="AnimationLibrary_rq6dk"]
+_data = {
+&"RESET": SubResource("Animation_diqia"),
+&"idle": SubResource("Animation_35u3g"),
+&"roll": SubResource("Animation_8sens"),
+&"swim": SubResource("Animation_rewf1"),
+&"walk": SubResource("Animation_fyo14")
+}
+
+[sub_resource type="Animation" id="Animation_ke32y"]
+length = 0.3
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("Model/RollCenter/ArmR:rotation:x")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0, 0.3),
+"transitions": PackedFloat32Array(1, 1),
+"update": 0,
+"values": [-2.2, 0.0]
+}
+
+[sub_resource type="AnimationLibrary" id="AnimationLibrary_fdrel"]
+_data = {
+&"attack": SubResource("Animation_ke32y")
+}
+
+[node name="Brute" type="CharacterBody3D" unique_id=1262133298]
+script = ExtResource("1_n5b4w")
+type_id = "brute"
+
+[node name="Collision" type="CollisionShape3D" parent="." unique_id=1381961231]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.05, 0)
+shape = SubResource("CapsuleShape3D_076xu")
+
+[node name="Model" type="Node3D" parent="." unique_id=448038351]
+
+[node name="RollCenter" type="Node3D" parent="Model" unique_id=312733175]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.945, 0)
+
+[node name="LegL" type="Node3D" parent="Model/RollCenter" unique_id=385213568]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.231, -0.15749997, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Model/RollCenter/LegL" unique_id=185651843]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.39375, 0)
+mesh = SubResource("BoxMesh_ys6b4")
+
+[node name="LegR" type="Node3D" parent="Model/RollCenter" unique_id=520747056]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.231, -0.15749997, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Model/RollCenter/LegR" unique_id=1223535202]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.39375, 0)
+mesh = SubResource("BoxMesh_hhkhs")
+
+[node name="Torso" type="MeshInstance3D" parent="Model/RollCenter" unique_id=2007040153]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.231, 0)
+mesh = SubResource("BoxMesh_0h3t2")
+
+[node name="ArmL" type="Node3D" parent="Model/RollCenter" unique_id=1371747302]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.5775, 0.57750005, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Model/RollCenter/ArmL" unique_id=721550944]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.3675, 0)
+mesh = SubResource("BoxMesh_bqu6l")
+
+[node name="Pauldron" type="MeshInstance3D" parent="Model/RollCenter/ArmL" unique_id=815467245]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0315, 0)
+mesh = SubResource("BoxMesh_u2dvn")
+
+[node name="Fist" type="MeshInstance3D" parent="Model/RollCenter/ArmL" unique_id=808498588]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.819, 0)
+mesh = SubResource("BoxMesh_na68k")
+
+[node name="ArmR" type="Node3D" parent="Model/RollCenter" unique_id=1825516730]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.5775, 0.57750005, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Model/RollCenter/ArmR" unique_id=1080990322]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.3675, 0)
+mesh = SubResource("BoxMesh_xnfie")
+
+[node name="Pauldron" type="MeshInstance3D" parent="Model/RollCenter/ArmR" unique_id=1093532796]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0315, 0)
+mesh = SubResource("BoxMesh_hsisr")
+
+[node name="Fist" type="MeshInstance3D" parent="Model/RollCenter/ArmR" unique_id=1545526185]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.819, 0)
+mesh = SubResource("BoxMesh_ku67v")
+
+[node name="Head" type="MeshInstance3D" parent="Model/RollCenter" unique_id=1744006819]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.966, 0)
+mesh = SubResource("BoxMesh_nahfm")
+
+[node name="EyeL" type="MeshInstance3D" parent="Model/RollCenter" unique_id=1478516234]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.1575, 1.0079999, -0.3255)
+mesh = SubResource("BoxMesh_jf2sf")
+
+[node name="EyeR" type="MeshInstance3D" parent="Model/RollCenter" unique_id=355788241]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.1575, 1.0079999, -0.3255)
+mesh = SubResource("BoxMesh_o1fob")
+
+[node name="BrowL" type="MeshInstance3D" parent="Model/RollCenter" unique_id=64068002]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.1575, 1.1340001, -0.3255)
+mesh = SubResource("BoxMesh_h3u4f")
+
+[node name="BrowR" type="MeshInstance3D" parent="Model/RollCenter" unique_id=1492793881]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.1575, 1.1340001, -0.3255)
+mesh = SubResource("BoxMesh_7eyjt")
+
+[node name="TuskL" type="MeshInstance3D" parent="Model/RollCenter" unique_id=184079847]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.147, 0.73499995, -0.3255)
+mesh = SubResource("BoxMesh_a6q78")
+
+[node name="TuskR" type="MeshInstance3D" parent="Model/RollCenter" unique_id=1165351884]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.147, 0.73499995, -0.3255)
+mesh = SubResource("BoxMesh_ktkpb")
+
+[node name="Anim" type="AnimationPlayer" parent="." unique_id=463075822]
+libraries/ = SubResource("AnimationLibrary_rq6dk")
+
+[node name="GearAnim" type="AnimationPlayer" parent="." unique_id=1320143921]
+libraries/ = SubResource("AnimationLibrary_fdrel")

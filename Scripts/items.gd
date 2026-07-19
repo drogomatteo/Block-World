@@ -1,6 +1,9 @@
 class_name Items
+extends Node
 
-# Définitions et génération des objets d'équipement.
+# Définitions et génération des objets d'équipement. Classe entièrement
+# statique : jamais instanciée (Scènes/Objets/items.tscn n'existe que pour
+# rendre le script visible dans l'arborescence des scènes).
 # Un objet = un Dictionary : {slot, rarity, name, damage?, health?, speed?}.
 # Les stats scalent avec le niveau du joueur au moment du drop.
 

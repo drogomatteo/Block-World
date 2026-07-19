@@ -1,0 +1,292 @@
+[gd_scene load_steps=2 format=3 uid="uid://xfc441cwpddr"]
+
+[ext_resource type="Script" uid="uid://b8sjaqn2mv68e" path="res://Scripts/options_menu.gd" id="1"]
+
+[node name="OptionsMenu" type="CanvasLayer"]
+process_mode = 3
+layer = 10
+script = ExtResource("1")
+
+[node name="Dim" type="ColorRect" parent="."]
+visible = false
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="Center" type="CenterContainer" parent="Dim"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Frame" type="PanelContainer" parent="Dim/Center"]
+custom_minimum_size = Vector2(500, 0)
+
+[node name="MainPage" type="VBoxContainer" parent="Dim/Center/Frame"]
+unique_name_in_owner = true
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="Dim/Center/Frame/MainPage"]
+text = "Options"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 30
+
+[node name="DisplayNavBtn" type="Button" parent="Dim/Center/Frame/MainPage"]
+unique_name_in_owner = true
+text = "Affichage"
+
+[node name="GraphicsNavBtn" type="Button" parent="Dim/Center/Frame/MainPage"]
+unique_name_in_owner = true
+text = "Graphismes & performances"
+
+[node name="GameNavBtn" type="Button" parent="Dim/Center/Frame/MainPage"]
+unique_name_in_owner = true
+text = "Jeu"
+
+[node name="Controls" type="Label" parent="Dim/Center/Frame/MainPage"]
+text = "Déplacement : Z Q S D     Courir : Maj     Sauter : Espace     Roulade : Ctrl
+Attaquer : Clic gauche     Spécial : Clic droit     Inventaire : I     Lanterne : G"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.78, 0.78, 0.82, 1)
+
+[node name="Sep" type="HSeparator" parent="Dim/Center/Frame/MainPage"]
+
+[node name="ResumeBtn" type="Button" parent="Dim/Center/Frame/MainPage"]
+unique_name_in_owner = true
+text = "Reprendre"
+
+[node name="MenuBtn" type="Button" parent="Dim/Center/Frame/MainPage"]
+unique_name_in_owner = true
+text = "Sauvegarder et retour au menu"
+
+[node name="QuitBtn" type="Button" parent="Dim/Center/Frame/MainPage"]
+unique_name_in_owner = true
+text = "Quitter le jeu"
+
+[node name="DisplayPage" type="VBoxContainer" parent="Dim/Center/Frame"]
+unique_name_in_owner = true
+visible = false
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="Dim/Center/Frame/DisplayPage"]
+text = "Affichage"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 30
+
+[node name="EditorWarn" type="Label" parent="Dim/Center/Frame/DisplayPage"]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(460, 0)
+text = "⚠ Le jeu tourne intégré à l'éditeur Godot : le plein écran et la résolution ne peuvent pas s'appliquer. Désactive « Intégrer la fenêtre de jeu » dans l'éditeur, ou lance un export du jeu."
+autowrap_mode = 3
+theme_override_colors/font_color = Color(1, 0.72, 0.3, 1)
+
+[node name="FullscreenCheck" type="CheckButton" parent="Dim/Center/Frame/DisplayPage"]
+unique_name_in_owner = true
+text = "Plein écran"
+
+[node name="ResRow" type="HBoxContainer" parent="Dim/Center/Frame/DisplayPage"]
+
+[node name="Label" type="Label" parent="Dim/Center/Frame/DisplayPage/ResRow"]
+size_flags_horizontal = 3
+text = "Résolution (fenêtré)"
+
+[node name="ResBtn" type="OptionButton" parent="Dim/Center/Frame/DisplayPage/ResRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(160, 0)
+item_count = 5
+selected = 1
+popup/item_0/text = "1152 × 648"
+popup/item_0/id = 0
+popup/item_1/text = "1280 × 720"
+popup/item_1/id = 1
+popup/item_2/text = "1600 × 900"
+popup/item_2/id = 2
+popup/item_3/text = "1920 × 1080"
+popup/item_3/id = 3
+popup/item_4/text = "2560 × 1440"
+popup/item_4/id = 4
+
+[node name="UIScaleRow" type="VBoxContainer" parent="Dim/Center/Frame/DisplayPage"]
+
+[node name="Label" type="Label" parent="Dim/Center/Frame/DisplayPage/UIScaleRow"]
+text = "Taille de l'interface"
+
+[node name="UIScaleSlider" type="HSlider" parent="Dim/Center/Frame/DisplayPage/UIScaleRow"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+min_value = 0.75
+max_value = 1.5
+step = 0.05
+value = 1.0
+
+[node name="Sep" type="HSeparator" parent="Dim/Center/Frame/DisplayPage"]
+
+[node name="DisplayBackBtn" type="Button" parent="Dim/Center/Frame/DisplayPage"]
+unique_name_in_owner = true
+text = "← Retour"
+
+[node name="GraphicsPage" type="VBoxContainer" parent="Dim/Center/Frame"]
+unique_name_in_owner = true
+visible = false
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="Dim/Center/Frame/GraphicsPage"]
+text = "Graphismes & performances"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 30
+
+[node name="RenderScaleRow" type="VBoxContainer" parent="Dim/Center/Frame/GraphicsPage"]
+
+[node name="Label" type="Label" parent="Dim/Center/Frame/GraphicsPage/RenderScaleRow"]
+text = "Échelle de rendu 3D (plus bas = plus rapide)"
+
+[node name="RenderScaleSlider" type="HSlider" parent="Dim/Center/Frame/GraphicsPage/RenderScaleRow"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+min_value = 0.5
+max_value = 1.0
+step = 0.05
+value = 1.0
+
+[node name="UpscaleRow" type="HBoxContainer" parent="Dim/Center/Frame/GraphicsPage"]
+
+[node name="Label" type="Label" parent="Dim/Center/Frame/GraphicsPage/UpscaleRow"]
+size_flags_horizontal = 3
+text = "Upscaling"
+
+[node name="UpscaleBtn" type="OptionButton" parent="Dim/Center/Frame/GraphicsPage/UpscaleRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(160, 0)
+item_count = 3
+selected = 0
+popup/item_0/text = "Bilinéaire"
+popup/item_0/id = 0
+popup/item_1/text = "FSR 1.0"
+popup/item_1/id = 1
+popup/item_2/text = "FSR 2.2"
+popup/item_2/id = 2
+
+[node name="MsaaRow" type="HBoxContainer" parent="Dim/Center/Frame/GraphicsPage"]
+
+[node name="Label" type="Label" parent="Dim/Center/Frame/GraphicsPage/MsaaRow"]
+size_flags_horizontal = 3
+text = "Anti-aliasing (MSAA)"
+
+[node name="MsaaBtn" type="OptionButton" parent="Dim/Center/Frame/GraphicsPage/MsaaRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(160, 0)
+item_count = 3
+selected = 0
+popup/item_0/text = "Désactivé"
+popup/item_0/id = 0
+popup/item_1/text = "2×"
+popup/item_1/id = 1
+popup/item_2/text = "4×"
+popup/item_2/id = 2
+
+[node name="ShadowsRow" type="HBoxContainer" parent="Dim/Center/Frame/GraphicsPage"]
+
+[node name="Label" type="Label" parent="Dim/Center/Frame/GraphicsPage/ShadowsRow"]
+size_flags_horizontal = 3
+text = "Qualité des ombres"
+
+[node name="ShadowsBtn" type="OptionButton" parent="Dim/Center/Frame/GraphicsPage/ShadowsRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(160, 0)
+item_count = 3
+selected = 1
+popup/item_0/text = "Basse"
+popup/item_0/id = 0
+popup/item_1/text = "Moyenne"
+popup/item_1/id = 1
+popup/item_2/text = "Haute"
+popup/item_2/id = 2
+
+[node name="VsyncCheck" type="CheckButton" parent="Dim/Center/Frame/GraphicsPage"]
+unique_name_in_owner = true
+text = "VSync"
+
+[node name="FpsRow" type="HBoxContainer" parent="Dim/Center/Frame/GraphicsPage"]
+
+[node name="Label" type="Label" parent="Dim/Center/Frame/GraphicsPage/FpsRow"]
+size_flags_horizontal = 3
+text = "Limite d'images/s"
+
+[node name="FpsBtn" type="OptionButton" parent="Dim/Center/Frame/GraphicsPage/FpsRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(160, 0)
+item_count = 4
+selected = 0
+popup/item_0/text = "Illimitée"
+popup/item_0/id = 0
+popup/item_1/text = "60"
+popup/item_1/id = 1
+popup/item_2/text = "120"
+popup/item_2/id = 2
+popup/item_3/text = "144"
+popup/item_3/id = 3
+
+[node name="RenderDistRow" type="VBoxContainer" parent="Dim/Center/Frame/GraphicsPage"]
+
+[node name="Label" type="Label" parent="Dim/Center/Frame/GraphicsPage/RenderDistRow"]
+text = "Distance de rendu (chunks)"
+
+[node name="RenderDistSlider" type="HSlider" parent="Dim/Center/Frame/GraphicsPage/RenderDistRow"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+min_value = 1.0
+max_value = 12.0
+step = 1.0
+value = 6.0
+
+[node name="Sep" type="HSeparator" parent="Dim/Center/Frame/GraphicsPage"]
+
+[node name="GraphicsBackBtn" type="Button" parent="Dim/Center/Frame/GraphicsPage"]
+unique_name_in_owner = true
+text = "← Retour"
+
+[node name="GamePage" type="VBoxContainer" parent="Dim/Center/Frame"]
+unique_name_in_owner = true
+visible = false
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="Dim/Center/Frame/GamePage"]
+text = "Jeu"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 30
+
+[node name="MouseSensRow" type="VBoxContainer" parent="Dim/Center/Frame/GamePage"]
+
+[node name="Label" type="Label" parent="Dim/Center/Frame/GamePage/MouseSensRow"]
+text = "Sensibilité souris"
+
+[node name="MouseSensSlider" type="HSlider" parent="Dim/Center/Frame/GamePage/MouseSensRow"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+min_value = 0.001
+max_value = 0.02
+step = 0.0005
+value = 0.005
+
+[node name="VolumeRow" type="VBoxContainer" parent="Dim/Center/Frame/GamePage"]
+
+[node name="Label" type="Label" parent="Dim/Center/Frame/GamePage/VolumeRow"]
+text = "Volume"
+
+[node name="VolumeSlider" type="HSlider" parent="Dim/Center/Frame/GamePage/VolumeRow"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+max_value = 1.0
+step = 0.05
+value = 1.0
+
+[node name="Sep" type="HSeparator" parent="Dim/Center/Frame/GamePage"]
+
+[node name="GameBackBtn" type="Button" parent="Dim/Center/Frame/GamePage"]
+unique_name_in_owner = true
+text = "← Retour"

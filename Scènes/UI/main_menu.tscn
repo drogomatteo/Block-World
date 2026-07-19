@@ -1,0 +1,203 @@
+[gd_scene load_steps=2 format=3 uid="uid://jhotggfy3b91"]
+
+[ext_resource type="Script" uid="uid://cqa268gg65w12" path="res://Scripts/main_menu.gd" id="1"]
+
+[node name="MainMenu" type="CanvasLayer"]
+process_mode = 3
+layer = 5
+script = ExtResource("1")
+
+[node name="Bg" type="ColorRect" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.06, 0.08, 0.13, 1)
+
+[node name="Band" type="ColorRect" parent="Bg"]
+custom_minimum_size = Vector2(0, 180)
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -180.0
+grow_horizontal = 2
+grow_vertical = 0
+color = Color(0.13, 0.22, 0.36, 1)
+
+[node name="Center" type="CenterContainer" parent="Bg"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Frame" type="PanelContainer" parent="Bg/Center"]
+custom_minimum_size = Vector2(620, 0)
+
+[node name="HomePage" type="MarginContainer" parent="Bg/Center/Frame"]
+unique_name_in_owner = true
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="Box" type="VBoxContainer" parent="Bg/Center/Frame/HomePage"]
+theme_override_constants/separation = 14
+
+[node name="Logo" type="Label" parent="Bg/Center/Frame/HomePage/Box"]
+text = "BLOCK WORLD"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 58
+theme_override_colors/font_color = Color(0.55, 0.78, 1, 1)
+
+[node name="Sub" type="Label" parent="Bg/Center/Frame/HomePage/Box"]
+text = "Un monde de cubes à explorer"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.6, 0.62, 0.7, 1)
+
+[node name="Sep" type="HSeparator" parent="Bg/Center/Frame/HomePage/Box"]
+
+[node name="PlayBtn" type="Button" parent="Bg/Center/Frame/HomePage/Box"]
+unique_name_in_owner = true
+text = "Jouer"
+
+[node name="OptionsBtn" type="Button" parent="Bg/Center/Frame/HomePage/Box"]
+unique_name_in_owner = true
+text = "Options"
+
+[node name="QuitBtn" type="Button" parent="Bg/Center/Frame/HomePage/Box"]
+unique_name_in_owner = true
+text = "Quitter"
+
+[node name="CharsPage" type="MarginContainer" parent="Bg/Center/Frame"]
+unique_name_in_owner = true
+visible = false
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="Box" type="VBoxContainer" parent="Bg/Center/Frame/CharsPage"]
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="Bg/Center/Frame/CharsPage/Box"]
+text = "Choisis ton personnage"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 30
+
+[node name="CharList" type="VBoxContainer" parent="Bg/Center/Frame/CharsPage/Box"]
+unique_name_in_owner = true
+theme_override_constants/separation = 8
+
+[node name="Sep" type="HSeparator" parent="Bg/Center/Frame/CharsPage/Box"]
+
+[node name="NewCharBtn" type="Button" parent="Bg/Center/Frame/CharsPage/Box"]
+unique_name_in_owner = true
+text = "+ Nouveau personnage"
+
+[node name="Sep2" type="HSeparator" parent="Bg/Center/Frame/CharsPage/Box"]
+
+[node name="CharsBackBtn" type="Button" parent="Bg/Center/Frame/CharsPage/Box"]
+unique_name_in_owner = true
+text = "← Retour"
+
+[node name="NewCharPage" type="MarginContainer" parent="Bg/Center/Frame"]
+unique_name_in_owner = true
+visible = false
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="Box" type="VBoxContainer" parent="Bg/Center/Frame/NewCharPage"]
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="Bg/Center/Frame/NewCharPage/Box"]
+text = "Nouveau personnage"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 30
+
+[node name="NameEdit" type="LineEdit" parent="Bg/Center/Frame/NewCharPage/Box"]
+unique_name_in_owner = true
+placeholder_text = "Nom de l'aventurier"
+max_length = 24
+
+[node name="CardRow" type="HBoxContainer" parent="Bg/Center/Frame/NewCharPage/Box"]
+unique_name_in_owner = true
+theme_override_constants/separation = 10
+
+[node name="Sep" type="HSeparator" parent="Bg/Center/Frame/NewCharPage/Box"]
+
+[node name="NewCharBackBtn" type="Button" parent="Bg/Center/Frame/NewCharPage/Box"]
+unique_name_in_owner = true
+text = "← Retour"
+
+[node name="WorldsPage" type="MarginContainer" parent="Bg/Center/Frame"]
+unique_name_in_owner = true
+visible = false
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="Box" type="VBoxContainer" parent="Bg/Center/Frame/WorldsPage"]
+theme_override_constants/separation = 14
+
+[node name="WorldsTitle" type="Label" parent="Bg/Center/Frame/WorldsPage/Box"]
+unique_name_in_owner = true
+text = "Choisis un monde"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 30
+
+[node name="WorldList" type="VBoxContainer" parent="Bg/Center/Frame/WorldsPage/Box"]
+unique_name_in_owner = true
+theme_override_constants/separation = 8
+
+[node name="Sep" type="HSeparator" parent="Bg/Center/Frame/WorldsPage/Box"]
+
+[node name="NewWorldBtn" type="Button" parent="Bg/Center/Frame/WorldsPage/Box"]
+unique_name_in_owner = true
+text = "+ Nouveau monde"
+
+[node name="Sep2" type="HSeparator" parent="Bg/Center/Frame/WorldsPage/Box"]
+
+[node name="WorldsBackBtn" type="Button" parent="Bg/Center/Frame/WorldsPage/Box"]
+unique_name_in_owner = true
+text = "← Retour"
+
+[node name="NewWorldPage" type="MarginContainer" parent="Bg/Center/Frame"]
+unique_name_in_owner = true
+visible = false
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="Box" type="VBoxContainer" parent="Bg/Center/Frame/NewWorldPage"]
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="Bg/Center/Frame/NewWorldPage/Box"]
+text = "Nouveau monde"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 30
+
+[node name="WorldNameEdit" type="LineEdit" parent="Bg/Center/Frame/NewWorldPage/Box"]
+unique_name_in_owner = true
+placeholder_text = "Nom du monde"
+max_length = 24
+
+[node name="SeedEdit" type="LineEdit" parent="Bg/Center/Frame/NewWorldPage/Box"]
+unique_name_in_owner = true
+placeholder_text = "Graine (vide = aléatoire, texte accepté)"
+
+[node name="CreateWorldBtn" type="Button" parent="Bg/Center/Frame/NewWorldPage/Box"]
+unique_name_in_owner = true
+text = "Créer et jouer"
+
+[node name="Sep" type="HSeparator" parent="Bg/Center/Frame/NewWorldPage/Box"]
+
+[node name="NewWorldBackBtn" type="Button" parent="Bg/Center/Frame/NewWorldPage/Box"]
+unique_name_in_owner = true
+text = "← Retour"

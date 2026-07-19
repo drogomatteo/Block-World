@@ -4,6 +4,12 @@ extends CanvasLayer
 # Panneau d'inventaire + équipement, ouvert/fermé avec la touche I.
 # N'interrompt pas le jeu : la souris est simplement libérée le temps de
 # manipuler les objets (le clic n'attaque pas quand la souris est visible).
+# Le squelette (panneau, titres, zone de défilement) vit dans
+# Scènes/UI/inventory_ui.tscn ; les lignes d'objets/équipement, dépendantes de
+# l'état du joueur, sont (re)construites ici à chaque _refresh. Règle de mise
+# en page : le panneau est positionné par les size flags de la scène
+# (SHRINK_END / SHRINK_CENTER), jamais par des ancres figées — sa taille
+# change avec le contenu.
 
 const SLOT_ORDER := ["weapon", "armor", "amulet"]
 
@@ -15,58 +21,11 @@ var _equip_box: VBoxContainer
 var _items_box: VBoxContainer
 
 func _ready() -> void:
-	layer = 5
-	process_mode = Node.PROCESS_MODE_ALWAYS
-	_build()
+	# layer 5 et process_mode ALWAYS : réglés dans la scène.
+	_panel = %Panel
+	_equip_box = %EquipBox
+	_items_box = %ItemsBox
 	player.inventory_changed.connect(_refresh)
-	_panel.visible = false
-
-func _build() -> void:
-	# Conteneur plein écran + size flags : le panneau reste collé au bord droit
-	# et centré verticalement QUELLE QUE SOIT sa taille (elle change quand des
-	# objets s'ajoutent — un ancrage figé calculé à la création déborderait).
-	var root := MarginContainer.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE # ne bloque pas les clics du jeu
-	root.add_theme_constant_override("margin_left", 16)
-	root.add_theme_constant_override("margin_top", 16)
-	root.add_theme_constant_override("margin_right", 16)
-	root.add_theme_constant_override("margin_bottom", 16)
-	add_child(root)
-
-	_panel = PanelContainer.new()
-	_panel.size_flags_horizontal = Control.SIZE_SHRINK_END
-	_panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	root.add_child(_panel)
-
-	var v := VBoxContainer.new()
-	v.custom_minimum_size = Vector2(380, 0)
-	v.add_theme_constant_override("separation", 10)
-	_panel.add_child(v)
-
-	var title := Label.new()
-	title.text = "Équipement"
-	title.add_theme_font_size_override("font_size", 22)
-	v.add_child(title)
-
-	_equip_box = VBoxContainer.new()
-	v.add_child(_equip_box)
-
-	v.add_child(HSeparator.new())
-
-	var title2 := Label.new()
-	title2.text = "Inventaire  (I pour fermer)"
-	title2.add_theme_font_size_override("font_size", 22)
-	v.add_child(title2)
-
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(380, 300)
-	v.add_child(scroll)
-
-	_items_box = VBoxContainer.new()
-	_items_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_items_box)
-
 	_refresh()
 
 # Reconstruit tout le contenu (simple et suffisant à cette échelle).

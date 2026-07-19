@@ -1,13 +1,16 @@
 class_name Player
 extends CharacterBody3D
 
-# Personnage jouable en 3e personne, façon Cube World.
-# La classe (class_id, à définir AVANT add_child) détermine les stats, l'arme,
-# l'attaque de base (mêlée ou projectile) et la compétence spéciale (clic droit).
-# Tout le "rig" (corps, arme, caméra orbitale, hitbox) est construit en code.
+# Personnage jouable en 3e personne, façon Cube World. LOGIQUE UNIQUEMENT :
+# le corps voxel, l'arme, la caméra orbitale, la hitbox et les clips
+# d'animation (walk/idle/swim/roll + attack/recoil) vivent dans les scènes de
+# classe Scènes/Acteurs/*.tscn (régénérables par tools/gen_actor_scenes.gd).
+# Ici on récupère les nœuds, on pilote les AnimationPlayer (play/speed_scale)
+# et on applique les stats de CLASSES (class_id préréglé par la scène).
+
+const PROJECTILE_SCENE := preload("res://Scènes/Objets/projectile.tscn")
 
 const JUMP_VELOCITY := 6.5
-const CAM_DISTANCE := 5.0
 const DASH_SPEED := 18.0
 const DASH_DURATION := 0.22
 
@@ -61,7 +64,7 @@ const CLASSES := {
 	},
 }
 
-var class_id := "warrior" # à définir AVANT add_child
+@export var class_id := "warrior" # préréglé par les scènes Scènes/Acteurs/*.tscn
 var gen: TerrainGen = null # posé par world.gd : sonde le terrain pour savoir où est l'eau
 
 var mouse_sensitivity := 0.005 # réglable depuis le menu Options
@@ -97,7 +100,6 @@ var equipment := {"weapon": null, "armor": null, "amulet": null}
 var inventory: Array = []
 
 var _pitch := -0.35
-var _bob_t := 0.0 # phase de l'animation de marche
 
 # Ruée (roublard)
 var _dash_timer := 0.0
@@ -116,7 +118,11 @@ var _arm_l: Node3D
 var _arm_r: Node3D
 var _leg_l: Node3D
 var _leg_r: Node3D
-var _offhand: Node3D       # dague main gauche du roublard (reconstruite avec l'arme)
+var _offhand: Node3D       # dague main gauche du roublard (null pour les autres)
+var _roll_center: Node3D   # pivot au centre du corps, animé par le clip "roll"
+var _anim: AnimationPlayer      # locomotion : walk / idle / swim_move / swim_idle / roll
+var _gear_anim: AnimationPlayer # arme : attack / recoil (joué par-dessus la locomotion)
+var _weapon_base_mesh := {}     # mesh d'origine (scène) de chaque partie de l'arme
 
 signal health_changed(current: int, maximum: int)
 signal xp_changed(current_xp: int, needed: int, level: int)
@@ -137,195 +143,43 @@ func _ready() -> void:
 	_recompute_stats()
 	health = max_health
 
-	_build_body()
-	_build_model(c["color"])
-	_build_camera()
-	_build_lantern()
+	# Le corps, l'arme, la caméra et les animations sont dans la scène de
+	# classe : on ne fait que récupérer les nœuds que la logique pilote.
+	model = $Model
+	_roll_center = $Model/RollCenter
+	_leg_l = $Model/RollCenter/LegL
+	_leg_r = $Model/RollCenter/LegR
+	_arm_l = $Model/RollCenter/ArmL
+	_arm_r = $Model/RollCenter/ArmR
+	weapon = _arm_r.get_node("Weapon")
+	_offhand = _arm_l.get_node_or_null("Offhand")
+	_lantern = _arm_l.get_node("Lantern")
+	_lantern_light = _lantern.get_node("LanternLight")
+	hitbox = $Model/Hitbox
+	cam_pivot = $CamPivot
+	camera = $CamPivot/SpringArm/Camera
+	_anim = $Anim
+	_gear_anim = $GearAnim
 
-func _build_body() -> void:
-	var cs := CollisionShape3D.new()
-	var cap := CapsuleShape3D.new()
-	cap.radius = 0.4
-	cap.height = 1.8
-	cs.shape = cap
-	cs.position = Vector3(0, 0.9, 0) # origine du CharacterBody = aux pieds
-	add_child(cs)
-
-# Corps voxel articulé façon Cube World : jambes et bras sur des pivots animés,
-# visage, ceinture, et une coiffe propre à chaque classe.
-func _build_model(class_color: Color) -> void:
-	model = Node3D.new()
-	add_child(model)
-
-	var skin := Color(0.94, 0.80, 0.62)
-	var pants := class_color.darkened(0.45)
-
-	# Torse + ceinture.
-	model.add_child(_box(Vector3(0.56, 0.62, 0.34), class_color, Vector3(0, 0.86, 0)))
-	model.add_child(_box(Vector3(0.58, 0.09, 0.36), class_color.darkened(0.6), Vector3(0, 0.585, 0)))
-
-	# Jambes (pivot à la hanche, la jambe pend dessous).
-	_leg_l = _limb(Vector3(-0.14, 0.55, 0), Vector3(0.19, 0.55, 0.23), pants)
-	_leg_r = _limb(Vector3(0.14, 0.55, 0), Vector3(0.19, 0.55, 0.23), pants)
-
-	# Bras (pivot à l'épaule) avec une petite main couleur peau.
-	_arm_l = _limb(Vector3(-0.37, 1.10, 0), Vector3(0.16, 0.52, 0.18), class_color)
-	_arm_r = _limb(Vector3(0.37, 1.10, 0), Vector3(0.16, 0.52, 0.18), class_color)
-	for arm in [_arm_l, _arm_r]:
-		arm.add_child(_box(Vector3(0.15, 0.12, 0.17), skin, Vector3(0, -0.50, 0)))
-
-	# Tête + yeux.
-	model.add_child(_box(Vector3(0.45, 0.45, 0.45), skin, Vector3(0, 1.40, 0)))
-	var eye_col := Color(0.10, 0.10, 0.14)
-	model.add_child(_box(Vector3(0.07, 0.11, 0.02), eye_col, Vector3(-0.10, 1.44, -0.235)))
-	model.add_child(_box(Vector3(0.07, 0.11, 0.02), eye_col, Vector3(0.10, 1.44, -0.235)))
-
-	_build_headgear(class_color)
-	_build_weapon()
-
-	hitbox = Area3D.new()
-	var hcs := CollisionShape3D.new()
-	var hshape := BoxShape3D.new()
-	hshape.size = Vector3(1.6, 1.6, 2.0)
-	hcs.shape = hshape
-	hcs.position = Vector3(0, 0.8, -1.1) # devant le personnage
-	hitbox.add_child(hcs)
-	model.add_child(hitbox)
-
-# Pivot de membre : le nœud est à l'articulation, la boîte pend en dessous —
-# une rotation X du pivot balance le membre (marche, nage).
-func _limb(pivot_pos: Vector3, size: Vector3, color: Color) -> Node3D:
-	var pivot := Node3D.new()
-	pivot.position = pivot_pos
-	model.add_child(pivot)
-	pivot.add_child(_box(size, color, Vector3(0, -size.y * 0.5, 0)))
-	return pivot
-
-# Coiffe / signe distinctif par classe.
-func _build_headgear(class_color: Color) -> void:
-	var metal := Color(0.72, 0.75, 0.82)
-	match class_id:
-		"warrior":
-			# Casque : dôme + rebord + protège-nez.
-			model.add_child(_box(Vector3(0.49, 0.16, 0.49), metal, Vector3(0, 1.60, 0), true))
-			model.add_child(_box(Vector3(0.53, 0.06, 0.53), metal.darkened(0.2), Vector3(0, 1.52, 0), true))
-			model.add_child(_box(Vector3(0.07, 0.16, 0.04), metal, Vector3(0, 1.42, -0.235), true))
-			# Épaulières montées sur les bras (elles suivent le balancement).
-			for arm in [_arm_l, _arm_r]:
-				arm.add_child(_box(Vector3(0.24, 0.12, 0.24), metal, Vector3(0, 0.04, 0), true))
-		"ranger":
-			# Capuche + cape courte dans le dos.
-			var hood := class_color.darkened(0.35)
-			model.add_child(_box(Vector3(0.51, 0.16, 0.51), hood, Vector3(0, 1.60, 0)))
-			model.add_child(_box(Vector3(0.49, 0.30, 0.08), hood, Vector3(0, 1.45, 0.24)))
-			model.add_child(_box(Vector3(0.44, 0.55, 0.06), hood.darkened(0.15), Vector3(0, 0.92, 0.22)))
-		"mage":
-			# Chapeau pointu étagé.
-			var hat := class_color.darkened(0.25)
-			model.add_child(_box(Vector3(0.60, 0.05, 0.60), hat, Vector3(0, 1.635, 0)))
-			model.add_child(_box(Vector3(0.36, 0.16, 0.36), hat, Vector3(0, 1.73, 0)))
-			model.add_child(_box(Vector3(0.22, 0.16, 0.22), hat.lightened(0.1), Vector3(0, 1.87, 0)))
-			model.add_child(_box(Vector3(0.10, 0.18, 0.10), hat.lightened(0.2), Vector3(0, 2.02, 0)))
-		"rogue":
-			# Bandana + nœud dans le dos, et un masque sur le bas du visage.
-			var band := Color(0.22, 0.22, 0.26)
-			model.add_child(_box(Vector3(0.47, 0.10, 0.47), band, Vector3(0, 1.56, 0)))
-			model.add_child(_box(Vector3(0.10, 0.16, 0.06), band, Vector3(0.12, 1.48, 0.25)))
-			model.add_child(_box(Vector3(0.46, 0.12, 0.10), band.lightened(0.1), Vector3(0, 1.30, -0.20)))
-
-# L'arme est accrochée à la main droite (elle suit le balancement du bras) ;
-# le roublard a une seconde dague dans la main gauche (_offhand).
-func _build_weapon() -> void:
-	weapon = Node3D.new()
-	weapon.position = Vector3(0.03, -0.50, -0.10)
-	_arm_r.add_child(weapon)
-	match class_id:
-		"warrior":
-			weapon.add_child(_box(Vector3(0.1, 0.9, 0.1), Color(0.82, 0.84, 0.9), Vector3(0, 0.25, 0), true))
-			weapon.add_child(_box(Vector3(0.26, 0.06, 0.08), Color(0.45, 0.35, 0.2), Vector3(0, -0.12, 0)))
-		"ranger":
-			weapon.add_child(_box(Vector3(0.07, 1.1, 0.07), Color(0.45, 0.30, 0.15), Vector3.ZERO))
-			weapon.add_child(_box(Vector3(0.05, 0.30, 0.05), Color(0.45, 0.30, 0.15), Vector3(0, 0.62, -0.08)))
-			weapon.add_child(_box(Vector3(0.05, 0.30, 0.05), Color(0.45, 0.30, 0.15), Vector3(0, -0.62, -0.08)))
-		"mage":
-			weapon.add_child(_box(Vector3(0.08, 1.3, 0.08), Color(0.30, 0.20, 0.12), Vector3.ZERO))
-			weapon.add_child(_glow_box(Vector3(0.16, 0.16, 0.16), Color(1.0, 0.55, 0.15), Vector3(0, 0.72, 0)))
-		"rogue":
-			weapon.add_child(_box(Vector3(0.07, 0.45, 0.07), Color(0.75, 0.78, 0.85), Vector3(0, 0.12, 0), true))
-	if class_id == "rogue":
-		_offhand = Node3D.new()
-		_offhand.position = Vector3(-0.03, -0.50, -0.10)
-		_arm_l.add_child(_offhand)
-		_offhand.add_child(_box(Vector3(0.07, 0.45, 0.07), Color(0.75, 0.78, 0.85), Vector3(0, 0.12, 0), true))
-
-func _build_camera() -> void:
-	cam_pivot = Node3D.new()
-	cam_pivot.position = Vector3(0, 1.4, 0)
 	cam_pivot.rotation.x = _pitch
-	add_child(cam_pivot)
+	# Ne pas cogner la caméra sur sa propre capsule (RID connu qu'au runtime).
+	($CamPivot/SpringArm as SpringArm3D).add_excluded_object(get_rid())
 
-	# SpringArm3D : pousse la caméra vers +Z jusqu'à CAM_DISTANCE mais la
-	# rapproche s'il y a un obstacle — la caméra ne traverse plus le terrain.
-	var arm := SpringArm3D.new()
-	arm.spring_length = CAM_DISTANCE
-	arm.margin = 0.3
-	# Cast avec une SPHÈRE plutôt que le rayon par défaut : un rayon passe à
-	# côté des obstacles hors-axe (feuillage d'arbre...) alors que les coins du
-	# champ de vision les traversent — la sphère couvre tout le cône de vue.
-	var cam_shape := SphereShape3D.new()
-	cam_shape.radius = 0.45
-	arm.shape = cam_shape
-	arm.add_excluded_object(get_rid()) # ne pas se cogner sur sa propre capsule
-	cam_pivot.add_child(arm)
+	# Les meshes de l'arme deviennent uniques à CETTE instance : la lueur de
+	# rareté (équipement) ne doit pas contaminer les ressources partagées de
+	# la scène, rechargées telles quelles à la prochaine partie.
+	for mi in _weapon_meshes():
+		_weapon_base_mesh[mi] = mi.mesh
+		mi.mesh = mi.mesh.duplicate(true)
 
-	# La caméra regarde son -Z, donc vers le personnage.
-	camera = Camera3D.new()
-	arm.add_child(camera)
-	camera.current = true
-
-# Lanterne tenue en main gauche (touche G) : éclaire tout autour du personnage.
-# Cacher le nœud éteint aussi la lumière (visible se propage aux enfants).
-func _build_lantern() -> void:
-	_lantern = Node3D.new()
-	_lantern.position = Vector3(0, -0.52, -0.16) # pend à la main gauche
-	_lantern.visible = false
-	_arm_l.add_child(_lantern)
-	# Socle et toit sombres, cœur lumineux visible entre les deux, petit anneau.
-	_lantern.add_child(_box(Vector3(0.16, 0.04, 0.16), Color(0.20, 0.18, 0.16), Vector3(0, -0.10, 0)))
-	_lantern.add_child(_box(Vector3(0.16, 0.04, 0.16), Color(0.20, 0.18, 0.16), Vector3(0, 0.10, 0)))
-	_lantern.add_child(_glow_box(Vector3(0.10, 0.16, 0.10), Color(1.0, 0.82, 0.45), Vector3.ZERO))
-	_lantern.add_child(_box(Vector3(0.04, 0.05, 0.04), Color(0.25, 0.23, 0.20), Vector3(0, 0.15, 0)))
-
-	_lantern_light = OmniLight3D.new()
-	_lantern_light.omni_range = 14.0
-	_lantern_light.light_energy = 2.2
-	_lantern_light.light_color = Color(1.0, 0.85, 0.55)
-	_lantern_light.shadow_enabled = true
-	_lantern.add_child(_lantern_light)
+func _weapon_meshes() -> Array:
+	var parts := weapon.get_children()
+	if _offhand != null:
+		parts.append_array(_offhand.get_children())
+	return parts.filter(func(n): return n is MeshInstance3D and n.mesh != null)
 
 func toggle_lantern() -> void:
 	_lantern.visible = not _lantern.visible
-
-func _box(size: Vector3, color: Color, pos: Vector3, metal := false) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = size
-	var m := StandardMaterial3D.new()
-	m.albedo_color = color
-	if metal:
-		m.metallic = 0.7
-		m.roughness = 0.3
-	bm.material = m
-	mi.mesh = bm
-	mi.position = pos
-	return mi
-
-func _glow_box(size: Vector3, color: Color, pos: Vector3) -> MeshInstance3D:
-	var mi := _box(size, color, pos)
-	var m: StandardMaterial3D = mi.mesh.material
-	m.emission_enabled = true
-	m.emission = color
-	return mi
 
 func _unhandled_input(event: InputEvent) -> void:
 	# Échap et la capture de la souris sont gérés par OptionsMenu.
@@ -357,20 +211,15 @@ func _physics_process(delta: float) -> void:
 	if not swimming and not is_on_floor():
 		velocity.y -= gravity * delta
 
-	# Roulade (Ctrl) : trajectoire forcée, galipette du modèle, esquive
-	# (take_damage ignore les dégâts tant que _roll_timer > 0).
+	# Roulade (Ctrl) : trajectoire forcée, esquive (take_damage ignore les
+	# dégâts tant que _roll_timer > 0). La galipette est le clip "roll",
+	# lancé par _start_roll.
 	if _roll_timer > 0.0:
 		_roll_timer -= delta
 		velocity.x = _roll_dir.x * ROLL_SPEED
 		velocity.z = _roll_dir.z * ROLL_SPEED
-		_roll_pose(1.0 - maxf(_roll_timer, 0.0) / ROLL_DURATION)
 		move_and_slide()
 		return
-	# Sortie de roulade : -TAU est identique à 0 visuellement mais pas pour le
-	# lissage — on replie l'angle pour éviter un « rembobinage » du corps.
-	model.rotation.x = wrapf(model.rotation.x, -PI, PI)
-	model.position.x = 0.0
-	model.position.z = 0.0
 
 	# Ruée du roublard : trajectoire forcée + dégâts sur le passage.
 	if _dash_timer > 0.0:
@@ -418,43 +267,24 @@ func _physics_process(delta: float) -> void:
 		# Le modèle pivote pour "regarder" la direction du mouvement.
 		var target := atan2(-move_dir.x, -move_dir.z)
 		model.rotation.y = lerp_angle(model.rotation.y, target, 12.0 * delta)
-		# Rebond de marche + balancement bras/jambes.
-		_bob_t += delta * speed
-		model.position.y = absf(sin(_bob_t * 1.6)) * 0.07
-		_swing_limbs(sin(_bob_t * 1.6) * 0.55, 0.8)
+		# Rebond + balancement des membres : clip "walk", cadencé par la vitesse.
+		_play_move("walk", speed)
 	else:
 		velocity.x = move_toward(velocity.x, 0.0, speed)
 		velocity.z = move_toward(velocity.z, 0.0, speed)
-		model.position.y = move_toward(model.position.y, 0.0, delta)
-		_relax_limbs(delta)
+		_play_move("idle", 1.0)
 
 	move_and_slide()
 
-# ---------- Membres / roulade ----------
+# ---------- Animations / roulade ----------
 
-# Balancement opposé jambes/bras (marche) ; arm_scale atténue les bras.
-func _swing_limbs(swing: float, arm_scale: float) -> void:
-	_leg_l.rotation.x = swing
-	_leg_r.rotation.x = -swing
-	_arm_l.rotation.x = -swing * arm_scale
-	_arm_r.rotation.x = swing * arm_scale
-
-func _relax_limbs(delta: float) -> void:
-	for limb in [_leg_l, _leg_r, _arm_l, _arm_r]:
-		limb.rotation.x = lerpf(limb.rotation.x, 0.0, minf(10.0 * delta, 1.0))
-
-# Pose de galipette : le modèle tourne autour du CENTRE du corps (pas des
-# pieds, son origine) — on compense avec un offset — et les membres se replient.
-const ROLL_PIVOT_HEIGHT := 0.85
-
-func _roll_pose(progress: float) -> void:
-	model.rotation.x = -TAU * progress
-	var c := Vector3.UP * ROLL_PIVOT_HEIGHT
-	model.position = c - model.basis * c # le centre reste en place pendant la rotation
-	for limb in [_arm_l, _arm_r]:
-		limb.rotation.x = lerpf(limb.rotation.x, 1.3, 0.5)
-	for limb in [_leg_l, _leg_r]:
-		limb.rotation.x = lerpf(limb.rotation.x, 1.1, 0.5)
+# Pilote le clip de locomotion : speed règle la cadence (speed_scale, l'ancien
+# phase += delta * vitesse) et le changement de clip est fondu pour éviter les
+# sauts de pose.
+func _play_move(anim_name: String, speed: float, blend := 0.25) -> void:
+	_anim.speed_scale = speed
+	if _anim.current_animation != anim_name:
+		_anim.play(anim_name, blend)
 
 # Roulade : direction du déplacement demandé, sinon vers où regarde le modèle.
 func _start_roll(move_dir: Vector3) -> void:
@@ -467,7 +297,7 @@ func _start_roll(move_dir: Vector3) -> void:
 	stamina = maxf(0.0, stamina - ROLL_COST)
 	_stamina_delay = STAMINA_REGEN_DELAY
 	model.rotation.y = atan2(-_roll_dir.x, -_roll_dir.z) # face à la roulade
-	_relax_limbs(1.0)
+	_play_move("roll", 1.0, 0.1)
 
 # ---------- Nage ----------
 
@@ -517,24 +347,12 @@ func _swim_process(delta: float, depth: float) -> void:
 			target_v = SWIM_UP_SPEED
 		velocity.y = move_toward(velocity.y, target_v, WATER_DRAG * delta)
 
-	# Le modèle bascule à l'horizontale quand on nage, avec une petite houle.
+	# Le modèle bascule à l'horizontale quand on nage ; crawl (moulinets +
+	# battements) ou surplace : clips de la scène.
 	var moving := input_dir.length() > 0.01
 	var tilt := -1.25 if moving else -0.35
 	model.rotation.x = lerpf(model.rotation.x, tilt, 5.0 * delta)
-	_bob_t += delta * (4.5 if moving else 2.0)
-	model.position.y = sin(_bob_t) * 0.05
-	if moving:
-		# Crawl : moulinets des bras en alternance + battements de jambes rapides.
-		_arm_l.rotation.x = fposmod(_bob_t * 1.6, TAU)
-		_arm_r.rotation.x = fposmod(_bob_t * 1.6 + PI, TAU)
-		_leg_l.rotation.x = sin(_bob_t * 3.5) * 0.45
-		_leg_r.rotation.x = -sin(_bob_t * 3.5) * 0.45
-	else:
-		# Surplace : petits mouvements des bras et des jambes pour flotter.
-		_arm_l.rotation.x = sin(_bob_t) * 0.35
-		_arm_r.rotation.x = -sin(_bob_t) * 0.35
-		_leg_l.rotation.x = sin(_bob_t * 1.4) * 0.25
-		_leg_r.rotation.x = -sin(_bob_t * 1.4) * 0.25
+	_play_move("swim_move" if moving else "swim_idle", 4.5 if moving else 2.0)
 
 	move_and_slide()
 
@@ -559,7 +377,7 @@ func _shoot(damage_mult: float, yaw_offset: float) -> void:
 	if yaw_offset != 0.0:
 		dir = dir.rotated(Vector3.UP, yaw_offset)
 	model.rotation.y = atan2(-dir.x, -dir.z) # le perso se tourne vers sa cible
-	var p := Projectile.new()
+	var p := PROJECTILE_SCENE.instantiate() as Projectile
 	p.setup(dir, _proj_speed, int(round(attack_damage * damage_mult)), "enemies", _proj_color, "player")
 	get_parent().add_child(p)
 	p.global_position = global_position + Vector3(0, 1.2, 0) + dir * 0.9
@@ -641,16 +459,15 @@ func _burst_effect(col: Color, radius: float) -> void:
 	t.tween_property(mat, "albedo_color:a", 0.0, 0.3)
 	t.chain().tween_callback(fx.queue_free)
 
+# Coup d'arme / recul d'arc : clips du GearAnim de la scène, joués par-dessus
+# la locomotion (le GearAnim est après Anim dans l'arbre : sa pose gagne).
 func _swing() -> void:
-	var t := create_tween()
-	weapon.rotation_degrees = Vector3(-130, 0, 0)
-	t.tween_property(weapon, "rotation_degrees:x", 40.0, 0.12)
-	t.tween_property(weapon, "rotation_degrees:x", 0.0, 0.12)
+	_gear_anim.stop()
+	_gear_anim.play("attack")
 
 func _recoil() -> void:
-	weapon.position.z = -0.07 # petit recul de l'arme vers l'arrière
-	var t := create_tween()
-	t.tween_property(weapon, "position:z", -0.25, 0.15)
+	_gear_anim.stop()
+	_gear_anim.play("recoil")
 
 # ---------- Équipement / inventaire ----------
 
@@ -707,24 +524,18 @@ func discard_item(index: int) -> void:
 	inventory.remove_at(index)
 	inventory_changed.emit()
 
-# Reconstruit l'arme visible ; si une arme est équipée, elle luit de la
-# couleur de sa rareté (feedback visuel du loot).
+# Rafraîchit l'arme de la scène : repart du mesh d'origine, puis si une arme
+# est équipée, la fait luire de la couleur de sa rareté (feedback du loot).
 func _refresh_weapon_visual() -> void:
-	weapon.queue_free()
-	if _offhand != null:
-		_offhand.queue_free()
-		_offhand = null
-	_build_weapon()
+	for mi in _weapon_meshes():
+		mi.mesh = _weapon_base_mesh[mi].duplicate(true)
 	var it = equipment["weapon"]
 	if it == null:
 		return
 	var col: Color = Items.RARITY_COLORS[it["rarity"]]
-	var parts := weapon.get_children()
-	if _offhand != null:
-		parts.append_array(_offhand.get_children())
-	for child in parts:
-		if child is MeshInstance3D and child.mesh != null and child.mesh.material is StandardMaterial3D:
-			var m: StandardMaterial3D = child.mesh.material
+	for mi in _weapon_meshes():
+		if mi.mesh.material is StandardMaterial3D:
+			var m: StandardMaterial3D = mi.mesh.material
 			m.emission_enabled = true
 			m.emission = col
 			m.emission_energy_multiplier = 0.4

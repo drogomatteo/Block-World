@@ -6,7 +6,10 @@ extends CanvasLayer
 # sac) et mondes (nom + graine) sont persistés dans user://profiles.cfg — les
 # fonctions statiques de persistance sont aussi utilisées par world.gd pour
 # sauvegarder la progression en cours de partie.
-# Créé par world.gd au lancement ; émet start_game puis world.gd le libère.
+# LOGIQUE UNIQUEMENT : les pages (fond, boutons, champs de texte) vivent dans
+# Scènes/UI/main_menu.tscn — toutes présentes, une seule visible. Ici :
+# navigation, remplissage des listes (personnages/mondes sauvegardés, cartes
+# de classes) et actions. Instancié par world.gd ; émet start_game.
 
 signal start_game(character: Dictionary, world_entry: Dictionary)
 
@@ -14,7 +17,7 @@ const SAVE_PATH := "user://profiles.cfg"
 
 var options: OptionsMenu = null # posé par world.gd (bouton Options de l'accueil)
 
-var _frame: PanelContainer      # conteneur de la page courante (reconstruite à chaque navigation)
+var _pages := {}                # nom de page -> nœud de la scène
 var _selected_char := {}
 var _name_edit: LineEdit
 var _world_name_edit: LineEdit
@@ -89,82 +92,62 @@ static func delete_entry(key: String) -> void:
 # ---------- Interface ----------
 
 func _ready() -> void:
-	# SOUS le menu Options (layer 10) : le bouton « Options » l'ouvre par-dessus.
-	# (Avant, le menu était au layer 20 : les options s'ouvraient DERRIÈRE,
-	# invisibles, et la pause gelait les boutons — tout le menu semblait mort.)
-	layer = 5
-	# Insensible à la pause : les boutons répondent toujours au retour des options.
-	process_mode = Node.PROCESS_MODE_ALWAYS
+	# layer 5 (SOUS les Options, layer 10, que le bouton « Options » ouvre
+	# par-dessus) et process_mode ALWAYS (boutons insensibles à la pause) sont
+	# réglés dans la scène.
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	_build_root()
+	_pages = {"home": %HomePage, "chars": %CharsPage, "newchar": %NewCharPage,
+		"worlds": %WorldsPage, "newworld": %NewWorldPage}
+	_name_edit = %NameEdit
+	_world_name_edit = %WorldNameEdit
+	_seed_edit = %SeedEdit
+
+	# Navigation et actions des boutons de la scène.
+	%PlayBtn.pressed.connect(func(): _show_page("chars"))
+	%OptionsBtn.pressed.connect(func():
+		if options != null:
+			options._set_open(true))
+	%QuitBtn.pressed.connect(func(): get_tree().quit())
+	%NewCharBtn.pressed.connect(func(): _show_page("newchar"))
+	%CharsBackBtn.pressed.connect(func(): _show_page("home"))
+	%NewCharBackBtn.pressed.connect(func(): _show_page("chars"))
+	%NewWorldBtn.pressed.connect(func(): _show_page("newworld"))
+	%WorldsBackBtn.pressed.connect(func(): _show_page("chars"))
+	%NewWorldBackBtn.pressed.connect(func(): _show_page("worlds"))
+	%CreateWorldBtn.pressed.connect(_create_world_and_play)
+
+	# Cartes de classes : couleurs/stats depuis Player.CLASSES, textes
+	# descriptifs depuis ClassSelect.CARDS — données de jeu, donc remplies ici
+	# plutôt que dupliquées dans la scène.
+	for card in ClassSelect.CARDS:
+		%CardRow.add_child(_class_card(card))
+
 	_show_page("home")
 
-func _build_root() -> void:
-	var bg := ColorRect.new()
-	bg.color = Color(0.06, 0.08, 0.13)
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(bg)
-
-	# Bandeau décoratif : dégradé horizon, clin d'œil au monde de cubes.
-	var band := ColorRect.new()
-	band.color = Color(0.13, 0.22, 0.36)
-	band.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	band.custom_minimum_size = Vector2(0, 180)
-	band.offset_top = -180
-	bg.add_child(band)
-
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.add_child(center)
-
-	_frame = PanelContainer.new()
-	_frame.custom_minimum_size = Vector2(620, 0)
-	center.add_child(_frame)
-
+# Toutes les pages existent dans la scène : naviguer = montrer l'une, cacher
+# les autres. Les pages à listes se re-remplissent à chaque affichage.
 func _show_page(page: String) -> void:
-	for c in _frame.get_children():
-		c.queue_free()
+	for key in _pages:
+		_pages[key].visible = (key == page)
 	match page:
-		"home":
-			_frame.add_child(_build_home())
 		"chars":
-			_frame.add_child(_build_chars())
-		"newchar":
-			_frame.add_child(_build_newchar())
+			_refresh_chars()
 		"worlds":
-			_frame.add_child(_build_worlds())
-		"newworld":
-			_frame.add_child(_build_newworld())
+			_refresh_worlds()
 
-func _page_box(title_text: String) -> VBoxContainer:
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 14)
-	var margin := MarginContainer.new() # respiration dans le panneau
-	for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
-		margin.add_theme_constant_override(side, 18)
-	var title := Label.new()
-	title.text = title_text
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 30)
-	box.add_child(title)
-	margin.add_child(box)
-	# On renvoie le VBox mais c'est le MarginContainer qui est ajouté au cadre.
-	box.set_meta("wrap", margin)
-	return box
+# Vide une liste dynamique (détache tout de suite : pas de doublons le temps
+# que queue_free s'exécute en fin de frame).
+func _clear_list(box: Node) -> void:
+	for c in box.get_children():
+		box.remove_child(c)
+		c.queue_free()
 
-func _wrap(box: VBoxContainer) -> Control:
-	return box.get_meta("wrap")
-
-func _nav_button(box: VBoxContainer, text: String, cb: Callable) -> Button:
-	var btn := Button.new()
-	btn.text = text
-	btn.pressed.connect(cb)
-	box.add_child(btn)
-	return btn
-
-func _back_button(box: VBoxContainer, target: String) -> void:
-	box.add_child(HSeparator.new())
-	_nav_button(box, "← Retour", func(): _show_page(target))
+func _empty_label(text: String) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.add_theme_color_override("font_color", Color(0.6, 0.62, 0.7))
+	return l
 
 # Bouton de suppression en deux temps : ✕ puis « Sûr ? ».
 func _delete_button(key: String, refresh_page: String) -> Button:
@@ -179,42 +162,13 @@ func _delete_button(key: String, refresh_page: String) -> Button:
 			_show_page(refresh_page))
 	return del
 
-# ---------- Pages ----------
+# ---------- Listes dynamiques (remplies depuis user://profiles.cfg) ----------
 
-func _build_home() -> Control:
-	var box := _page_box("")
-	box.get_child(0).queue_free() # pas de petit titre : le gros logo suffit
-
-	var logo := Label.new()
-	logo.text = "BLOCK WORLD"
-	logo.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	logo.add_theme_font_size_override("font_size", 58)
-	logo.add_theme_color_override("font_color", Color(0.55, 0.78, 1.0))
-	box.add_child(logo)
-
-	var sub := Label.new()
-	sub.text = "Un monde de cubes à explorer"
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.add_theme_color_override("font_color", Color(0.6, 0.62, 0.7))
-	box.add_child(sub)
-
-	box.add_child(HSeparator.new())
-	_nav_button(box, "Jouer", func(): _show_page("chars"))
-	_nav_button(box, "Options", func():
-		if options != null:
-			options._set_open(true))
-	_nav_button(box, "Quitter", func(): get_tree().quit())
-	return _wrap(box)
-
-func _build_chars() -> Control:
-	var box := _page_box("Choisis ton personnage")
+func _refresh_chars() -> void:
+	_clear_list(%CharList)
 	var chars := MainMenu.list_characters()
 	if chars.is_empty():
-		var empty := Label.new()
-		empty.text = "Aucun personnage pour l'instant — crée le premier !"
-		empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		empty.add_theme_color_override("font_color", Color(0.6, 0.62, 0.7))
-		box.add_child(empty)
+		%CharList.add_child(_empty_label("Aucun personnage pour l'instant — crée le premier !"))
 	for ch in chars:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
@@ -231,30 +185,7 @@ func _build_chars() -> Control:
 			_show_page("worlds"))
 		row.add_child(pick)
 		row.add_child(_delete_button(ch["key"], "chars"))
-		box.add_child(row)
-	box.add_child(HSeparator.new())
-	_nav_button(box, "+ Nouveau personnage", func(): _show_page("newchar"))
-	_back_button(box, "home")
-	return _wrap(box)
-
-func _build_newchar() -> Control:
-	var box := _page_box("Nouveau personnage")
-
-	_name_edit = LineEdit.new()
-	_name_edit.placeholder_text = "Nom de l'aventurier"
-	_name_edit.max_length = 24
-	box.add_child(_name_edit)
-
-	# Cartes de classes : couleurs/stats depuis Player.CLASSES, textes
-	# descriptifs depuis ClassSelect.CARDS (mêmes sources que l'ancien écran).
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	for card in ClassSelect.CARDS:
-		row.add_child(_class_card(card))
-	box.add_child(row)
-
-	_back_button(box, "chars")
-	return _wrap(box)
+		%CharList.add_child(row)
 
 func _class_card(card: Dictionary) -> Control:
 	var id: String = card["id"]
@@ -302,15 +233,12 @@ func _class_card(card: Dictionary) -> Control:
 	v.add_child(btn)
 	return panel
 
-func _build_worlds() -> Control:
-	var box := _page_box("Choisis un monde — %s" % _selected_char.get("name", "?"))
+func _refresh_worlds() -> void:
+	%WorldsTitle.text = "Choisis un monde — %s" % _selected_char.get("name", "?")
+	_clear_list(%WorldList)
 	var worlds := MainMenu.list_worlds()
 	if worlds.is_empty():
-		var empty := Label.new()
-		empty.text = "Aucun monde pour l'instant — génère le premier !"
-		empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		empty.add_theme_color_override("font_color", Color(0.6, 0.62, 0.7))
-		box.add_child(empty)
+		%WorldList.add_child(_empty_label("Aucun monde pour l'instant — génère le premier !"))
 	for w in worlds:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
@@ -320,33 +248,14 @@ func _build_worlds() -> Control:
 		pick.pressed.connect(func(): start_game.emit(_selected_char, w))
 		row.add_child(pick)
 		row.add_child(_delete_button(w["key"], "worlds"))
-		box.add_child(row)
-	box.add_child(HSeparator.new())
-	_nav_button(box, "+ Nouveau monde", func(): _show_page("newworld"))
-	_back_button(box, "chars")
-	return _wrap(box)
+		%WorldList.add_child(row)
 
-func _build_newworld() -> Control:
-	var box := _page_box("Nouveau monde")
-
-	_world_name_edit = LineEdit.new()
-	_world_name_edit.placeholder_text = "Nom du monde"
-	_world_name_edit.max_length = 24
-	box.add_child(_world_name_edit)
-
-	_seed_edit = LineEdit.new()
-	_seed_edit.placeholder_text = "Graine (vide = aléatoire, texte accepté)"
-	box.add_child(_seed_edit)
-
-	_nav_button(box, "Créer et jouer", func():
-		var world_name := _world_name_edit.text.strip_edges()
-		if world_name.is_empty():
-			world_name = "Nouveau monde"
-		var w := MainMenu.create_world(world_name, _parse_seed(_seed_edit.text))
-		start_game.emit(_selected_char, w))
-
-	_back_button(box, "worlds")
-	return _wrap(box)
+func _create_world_and_play() -> void:
+	var world_name := _world_name_edit.text.strip_edges()
+	if world_name.is_empty():
+		world_name = "Nouveau monde"
+	var w := MainMenu.create_world(world_name, _parse_seed(_seed_edit.text))
+	start_game.emit(_selected_char, w)
 
 # Graine : vide = aléatoire ; nombre = pris tel quel ; texte = hashé (déterministe).
 func _parse_seed(text: String) -> int:

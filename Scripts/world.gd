@@ -6,7 +6,30 @@ extends Node3D
 #  - fait apparaître le joueur et les ennemis,
 #  - gère un HUD minimal (barre de PV + aide).
 
-const TREE_SCENE := preload("res://Scènes/tree.tscn")
+# Toutes les briques du jeu sont des SCÈNES (Scènes/...) instanciées ici :
+# plus aucun objet n'est créé via Classe.new() — on voit dans l'éditeur à quoi
+# chaque script correspond. Les presets (class_id, type_id...) vivent dans les
+# .tscn ; les paramètres dynamiques (seed, joueur...) restent posés en code
+# entre instantiate() et add_child().
+const TERRAIN_GEN_SCENE := preload("res://Scènes/Monde/terrain_gen.tscn")
+const CHUNK_SCENE := preload("res://Scènes/Monde/chunk.tscn")
+const DAY_NIGHT_SCENE := preload("res://Scènes/Monde/day_night.tscn")
+const UI_SCENE := preload("res://Scènes/UI/ui.tscn")
+const MAIN_MENU_SCENE := preload("res://Scènes/UI/main_menu.tscn")
+const OPTIONS_MENU_SCENE := preload("res://Scènes/UI/options_menu.tscn")
+const INVENTORY_UI_SCENE := preload("res://Scènes/UI/inventory_ui.tscn")
+const PLAYER_SCENES := {
+	"warrior": preload("res://Scènes/Acteurs/warrior.tscn"),
+	"ranger": preload("res://Scènes/Acteurs/ranger.tscn"),
+	"mage": preload("res://Scènes/Acteurs/mage.tscn"),
+	"rogue": preload("res://Scènes/Acteurs/rogue.tscn"),
+}
+const ENEMY_SCENES := {
+	"slime": preload("res://Scènes/Acteurs/slime.tscn"),
+	"scout": preload("res://Scènes/Acteurs/scout.tscn"),
+	"brute": preload("res://Scènes/Acteurs/brute.tscn"),
+	"archer": preload("res://Scènes/Acteurs/archer.tscn"),
+}
 
 # Le niveau de l'eau vit dans TerrainGen.WATER_Y : la génération (arbres,
 # décorations, couleur des blocs immergés) doit connaître le même seuil.
@@ -85,13 +108,13 @@ func _ready() -> void:
 
 	# Créé dès maintenant : les réglages sauvegardés (résolution, plein écran,
 	# qualité...) s'appliquent au lancement, pas seulement une fois en jeu.
-	_options = OptionsMenu.new()
+	_options = OPTIONS_MENU_SCENE.instantiate() as OptionsMenu
 	_options.world = self
 	add_child(_options)
 
 	# Menu principal (personnages + mondes) : la génération n'existe qu'une
 	# fois un monde choisi — sa graine vient de l'entrée de monde sauvegardée.
-	_menu = MainMenu.new()
+	_menu = MAIN_MENU_SCENE.instantiate() as MainMenu
 	_menu.options = _options
 	_menu.start_game.connect(_on_start_game)
 	add_child(_menu)
@@ -107,14 +130,18 @@ func start_session(character: Dictionary, seed_value: int) -> void:
 		_menu.queue_free()
 		_menu = null
 
-	gen = TerrainGen.new(seed_value)
+	# La scène ne peut pas passer la graine au constructeur : setup() AVANT usage.
+	gen = TERRAIN_GEN_SCENE.instantiate() as TerrainGen
+	gen.setup(seed_value)
+	add_child(gen)
 	_make_day_night()
 	# On construit tout de suite le chunk de spawn : sinon le joueur tombe dans le vide.
 	_build_chunk(Vector2i(0, 0))
 
+	# Une scène par classe (class_id préréglé dedans).
 	var id: String = character.get("class_id", "warrior")
-	player = Player.new()
-	player.class_id = id
+	var scene: PackedScene = PLAYER_SCENES.get(id, PLAYER_SCENES["warrior"])
+	player = scene.instantiate() as Player
 	player.gen = gen # la nage sonde le terrain pour savoir où est l'eau
 	add_child(player)
 	player.global_position = Vector3(0.25, _ground_y(0.0, 0.0) + 3.0, 0.25)
@@ -145,7 +172,7 @@ func start_session(character: Dictionary, seed_value: int) -> void:
 
 	_options.attach_player(player)
 
-	var inv := InventoryUI.new()
+	var inv := INVENTORY_UI_SCENE.instantiate() as InventoryUI
 	inv.player = player
 	add_child(inv)
 
@@ -262,11 +289,10 @@ func _process_build_queue() -> void:
 func _build_chunk(key: Vector2i) -> void:
 	if loaded_chunks.has(key):
 		return
-	var c := Chunk.new()
+	var c := CHUNK_SCENE.instantiate() as Chunk
 	c.gen = gen
 	c.cx = key.x
 	c.cz = key.y
-	c.tree_scene = TREE_SCENE
 	c.water_material = _water_mat
 	c.position = Vector3(key.x * chunk_size, 0, key.y * chunk_size) * Chunk.CUBE
 	add_child(c)
@@ -300,8 +326,8 @@ func _handle_enemy_spawns(delta: float) -> void:
 	var ex := player.global_position.x + cos(ang) * r
 	var ez := player.global_position.z + sin(ang) * r
 	var ey := _ground_y(ex, ez) + 2.0
-	var e := Enemy.new()
-	e.type_id = _pick_enemy_type()
+	# Une scène par archétype (type_id préréglé dedans).
+	var e := ENEMY_SCENES[_pick_enemy_type()].instantiate() as Enemy
 	add_child(e)
 	e.global_position = Vector3(ex, ey, ez)
 
@@ -317,84 +343,18 @@ func _pick_enemy_type() -> String:
 
 # ---------- HUD ----------
 
+# Le HUD (jauges PV/XP/spécial/endurance + labels, styles compris) est
+# entièrement décrit dans Scènes/UI/ui.tscn : ici on ne fait plus que
+# l'instancier et récupérer les nœuds à mettre à jour en jeu.
 func _make_hud() -> void:
-	var layer := CanvasLayer.new()
-	layer.visible = false # affiché quand la classe est choisie
-	add_child(layer)
-	_hud = layer
-
-	var bar := ProgressBar.new()
-	bar.min_value = 0
-	bar.max_value = 100
-	bar.value = 100
-	bar.custom_minimum_size = Vector2(240, 26)
-	bar.position = Vector2(24, 24)
-	bar.show_percentage = false
-	_style_bar(bar, Color(0.85, 0.25, 0.25))
-	layer.add_child(bar)
-	_hp_bar = bar
-
-	var hp_label := Label.new()
-	hp_label.text = "PV"
-	hp_label.position = Vector2(30, 26)
-	layer.add_child(hp_label)
-
-	var xp_bar := ProgressBar.new()
-	xp_bar.min_value = 0
-	xp_bar.max_value = 100
-	xp_bar.value = 0
-	xp_bar.custom_minimum_size = Vector2(240, 14)
-	xp_bar.position = Vector2(24, 56)
-	xp_bar.show_percentage = false
-	_style_bar(xp_bar, Color(0.25, 0.75, 0.95))
-	layer.add_child(xp_bar)
-	_xp_bar = xp_bar
-
-	var level_label := Label.new()
-	level_label.text = "Niv. 1"
-	level_label.position = Vector2(276, 22)
-	layer.add_child(level_label)
-	_level_label = level_label
-
-	var class_label := Label.new()
-	class_label.text = ""
-	class_label.position = Vector2(276, 46)
-	layer.add_child(class_label)
-	_class_label = class_label
-
-	# Jauge de la compétence spéciale (clic droit) : pleine = prête.
-	var sp_bar := ProgressBar.new()
-	sp_bar.min_value = 0.0
-	sp_bar.max_value = 1.0
-	sp_bar.value = 1.0
-	sp_bar.custom_minimum_size = Vector2(240, 10)
-	sp_bar.position = Vector2(24, 78)
-	sp_bar.show_percentage = false
-	_style_bar(sp_bar, Color(0.95, 0.80, 0.30))
-	layer.add_child(sp_bar)
-	_special_bar = sp_bar
-
-	var sp_label := Label.new()
-	sp_label.text = "Spécial (clic droit)"
-	sp_label.position = Vector2(276, 70)
-	layer.add_child(sp_label)
-
-	# Jauge d'endurance (sprint Maj + roulade Ctrl).
-	var st_bar := ProgressBar.new()
-	st_bar.min_value = 0.0
-	st_bar.max_value = 100.0
-	st_bar.value = 100.0
-	st_bar.custom_minimum_size = Vector2(240, 10)
-	st_bar.position = Vector2(24, 94)
-	st_bar.show_percentage = false
-	_style_bar(st_bar, Color(0.40, 0.80, 0.40))
-	layer.add_child(st_bar)
-	_stamina_bar = st_bar
-
-	var st_label := Label.new()
-	st_label.text = "Endurance (Maj / Ctrl roulade)"
-	st_label.position = Vector2(276, 88)
-	layer.add_child(st_label)
+	_hud = UI_SCENE.instantiate() as CanvasLayer # invisible tant qu'aucune partie n'est lancée
+	add_child(_hud)
+	_hp_bar = _hud.get_node("HPBar")
+	_xp_bar = _hud.get_node("XPBar")
+	_level_label = _hud.get_node("LevelLabel")
+	_class_label = _hud.get_node("ClassLabel")
+	_special_bar = _hud.get_node("SpecialBar")
+	_stamina_bar = _hud.get_node("StaminaBar")
 
 func _make_water_material() -> void:
 	var sh := Shader.new()
@@ -404,7 +364,7 @@ func _make_water_material() -> void:
 
 # Le cycle jour/nuit pilote la lumière et l'environnement déjà posés dans world.tscn.
 func _make_day_night() -> void:
-	_day_night = DayNight.new()
+	_day_night = DAY_NIGHT_SCENE.instantiate() as DayNight
 	_day_night.sun = $DirectionalLight3D
 	_day_night.environment = ($WorldEnvironment as WorldEnvironment).environment
 	_day_night.day_length = day_length
@@ -438,16 +398,6 @@ func _update_underwater() -> void:
 	_underwater_rect.visible = uw
 	if _day_night != null:
 		_day_night.underwater = uw
-
-func _style_bar(bar: ProgressBar, fill: Color) -> void:
-	var bg := StyleBoxFlat.new()
-	bg.bg_color = Color(0.05, 0.05, 0.08, 0.6)
-	bg.set_corner_radius_all(4)
-	var fg := StyleBoxFlat.new()
-	fg.bg_color = fill
-	fg.set_corner_radius_all(4)
-	bar.add_theme_stylebox_override("background", bg)
-	bar.add_theme_stylebox_override("fill", fg)
 
 func _on_player_health_changed(current: int, maximum: int) -> void:
 	if _hp_bar != null:

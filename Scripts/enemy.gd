@@ -1,13 +1,20 @@
 class_name Enemy
 extends CharacterBody3D
 
-# Ennemi piloté par archétype (type_id, à définir AVANT add_child).
+# Ennemi piloté par archétype (type_id, préréglé par les scènes d'Acteurs).
+# LOGIQUE UNIQUEMENT : le corps voxel et les clips d'animation (walk/idle/
+# swim/roll + attack/draw) vivent dans Scènes/Acteurs/<type>.tscn
+# (régénérables par tools/gen_actor_scenes.gd) ; ici on récupère les nœuds et
+# on pilote les AnimationPlayer.
 # IA : hors aggro ils errent ; en aggro les mêlée chassent (en sautant les
 # obstacles d'un ou deux blocs), l'éclaireur approche en zigzag et esquive en
 # roulade, l'archer garde ses distances en se déplaçant latéralement et tire
 # en anticipant le déplacement du joueur. Les types "agiles" ont une endurance
 # qui limite leurs roulades (invincibles pendant la roulade, comme le joueur).
 # À la mort : lâche de l'XP (+ parfois un soin / un équipement).
+
+const PROJECTILE_SCENE := preload("res://Scènes/Objets/projectile.tscn")
+const PICKUP_SCENE := preload("res://Scènes/Objets/pickup.tscn")
 
 const AGGRO_RANGE := 18.0
 const ATTACK_RANGE := 1.9
@@ -35,7 +42,7 @@ const TYPES := {
 }
 
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
-var type_id := "slime" # à définir AVANT add_child
+@export var type_id := "slime" # préréglé par les scènes Scènes/Acteurs/*.tscn
 
 var max_health := 40
 var health := 40
@@ -51,7 +58,6 @@ var _size := 0.7
 var _attack_timer := 0.0
 var _jump_timer := 0.0     # anti-rebond du saut d'obstacle / cadence des bonds du slime
 var _strafe_t := 0.0       # phase des déplacements latéraux (archer/zigzag)
-var _bob_t := 0.0          # phase de l'animation de marche
 var _stamina := STAMINA_MAX
 var _roll_timer := 0.0
 var _roll_dir := Vector3.ZERO
@@ -62,7 +68,10 @@ var _base_albedo := Color.WHITE # albedo d'origine du torse (restauré après le
 var player: Node3D
 var _gen: TerrainGen = null # récupéré sur le World parent (flottaison dans l'eau)
 
-var model: Node3D          # tous les visuels (tourne en roulade, s'écrase pour le slime)
+var model: Node3D          # tous les visuels (s'écrase pour le slime)
+var _roll_center: Node3D   # pivot central de la galipette (humanoïdes)
+var _anim: AnimationPlayer      # locomotion (null pour le slime)
+var _gear_anim: AnimationPlayer # attaque / recul d'arc (par-dessus la marche)
 var _arm_l: Node3D
 var _arm_r: Node3D
 var _leg_l: Node3D
@@ -86,113 +95,26 @@ func _ready() -> void:
 	if parent != null:
 		_gen = parent.get("gen")
 	_strafe_t = randf() * TAU # déphase les ennemis entre eux
-	_build()
 
-# ---------- Construction du corps ----------
-
-func _build() -> void:
-	var cs := CollisionShape3D.new()
-	var cap := CapsuleShape3D.new()
-	cap.radius = _size * 0.5
-	cap.height = _size * 2.0
-	cs.shape = cap
-	cs.position = Vector3(0, _size, 0)
-	add_child(cs)
-
-	model = Node3D.new()
-	add_child(model)
-
+	# Corps et animations : dans la scène d'archétype. On récupère les nœuds
+	# pilotés, et on rend le mesh du corps unique à CETTE instance — sinon le
+	# flash de dégâts blanchirait tous les ennemis partageant la ressource.
+	model = $Model
+	_anim = get_node_or_null("Anim")
+	_gear_anim = get_node_or_null("GearAnim")
+	var body_mesh: MeshInstance3D
 	if _hops:
-		_build_slime()
+		body_mesh = $Model/Body
 	else:
-		_build_humanoid()
-
-func _box(size: Vector3, color: Color, pos: Vector3, parent: Node3D, metal := false) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = size
-	var m := StandardMaterial3D.new()
-	m.albedo_color = color
-	if metal:
-		m.metallic = 0.7
-		m.roughness = 0.3
-	bm.material = m
-	mi.mesh = bm
-	mi.position = pos
-	parent.add_child(mi)
-	return mi
-
-func _limb(pivot_pos: Vector3, size: Vector3, color: Color) -> Node3D:
-	var pivot := Node3D.new()
-	pivot.position = pivot_pos
-	model.add_child(pivot)
-	_box(size, color, Vector3(0, -size.y * 0.5, 0), pivot)
-	return pivot
-
-# Slime : cube gélatineux translucide avec un noyau, des yeux et une bouche.
-func _build_slime() -> void:
-	var s := _size
-	var body := _box(Vector3(s * 1.15, s * 0.85, s * 1.05), _color, Vector3(0, s * 0.45, 0), model)
-	_body_mat = body.mesh.material
-	_body_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_body_mat.albedo_color = Color(_color.r, _color.g, _color.b, 0.82)
+		_roll_center = $Model/RollCenter
+		_leg_l = $Model/RollCenter/LegL
+		_leg_r = $Model/RollCenter/LegR
+		_arm_l = $Model/RollCenter/ArmL
+		_arm_r = $Model/RollCenter/ArmR
+		body_mesh = $Model/RollCenter/Torso
+	body_mesh.mesh = body_mesh.mesh.duplicate(true)
+	_body_mat = body_mesh.mesh.material
 	_base_albedo = _body_mat.albedo_color
-	_box(Vector3(s * 0.45, s * 0.4, s * 0.4), _color.darkened(0.35), Vector3(0, s * 0.4, 0), model)
-	var eye_col := Color(0.05, 0.05, 0.05)
-	_box(Vector3(s * 0.16, s * 0.2, 0.03), eye_col, Vector3(-s * 0.24, s * 0.55, -s * 0.53), model)
-	_box(Vector3(s * 0.16, s * 0.2, 0.03), eye_col, Vector3(s * 0.24, s * 0.55, -s * 0.53), model)
-	_box(Vector3(s * 0.22, s * 0.06, 0.03), eye_col, Vector3(0, s * 0.3, -s * 0.53), model)
-
-# Humanoïde paramétré par la taille : éclaireur, brute et archer partagent le
-# squelette (jambes/bras sur pivots animés) et se distinguent par l'équipement.
-func _build_humanoid() -> void:
-	var s := _size
-	var hip := s * 0.75
-	var pants := _color.darkened(0.5)
-
-	_leg_l = _limb(Vector3(-s * 0.22, hip, 0), Vector3(s * 0.28, hip, s * 0.3), pants)
-	_leg_r = _limb(Vector3(s * 0.22, hip, 0), Vector3(s * 0.28, hip, s * 0.3), pants)
-
-	var torso := _box(Vector3(s * 0.85, s * 0.75, s * 0.5), _color, Vector3(0, hip + s * 0.37, 0), model)
-	_body_mat = torso.mesh.material
-	_base_albedo = _body_mat.albedo_color
-
-	var arm_size := Vector3(s * 0.24, s * 0.6, s * 0.26)
-	if type_id == "brute":
-		arm_size = Vector3(s * 0.32, s * 0.7, s * 0.34)
-	_arm_l = _limb(Vector3(-s * 0.55, hip + s * 0.70, 0), arm_size, _color.darkened(0.2))
-	_arm_r = _limb(Vector3(s * 0.55, hip + s * 0.70, 0), arm_size, _color.darkened(0.2))
-
-	var head_y := hip + s * 0.75 + s * 0.32
-	_box(Vector3(s * 0.6, s * 0.6, s * 0.6), _color.lightened(0.15), Vector3(0, head_y, 0), model)
-	var eye_col := Color(0.05, 0.05, 0.05)
-	_box(Vector3(s * 0.13, s * 0.15, 0.03), eye_col, Vector3(-s * 0.15, head_y + s * 0.04, -s * 0.31), model)
-	_box(Vector3(s * 0.13, s * 0.15, 0.03), eye_col, Vector3(s * 0.15, head_y + s * 0.04, -s * 0.31), model)
-
-	match type_id:
-		"scout":
-			# Bandana + dague : l'agile détrousseur.
-			_box(Vector3(s * 0.64, s * 0.12, s * 0.64), _color.darkened(0.55), Vector3(0, head_y + s * 0.32, 0), model)
-			_box(Vector3(s * 0.14, s * 0.3, s * 0.08), _color.darkened(0.55), Vector3(s * 0.2, head_y + s * 0.2, s * 0.33), model)
-			_box(Vector3(0.06, s * 0.55, 0.06), Color(0.75, 0.78, 0.85), Vector3(0, -s * 0.55, -s * 0.12), _arm_r, true)
-		"brute":
-			# Sourcils froncés, défenses, épaulières et gros poings.
-			var brow := Color(0.15, 0.05, 0.05)
-			_box(Vector3(s * 0.2, s * 0.07, 0.04), brow, Vector3(-s * 0.15, head_y + s * 0.16, -s * 0.31), model)
-			_box(Vector3(s * 0.2, s * 0.07, 0.04), brow, Vector3(s * 0.15, head_y + s * 0.16, -s * 0.31), model)
-			_box(Vector3(s * 0.09, s * 0.16, 0.05), Color(0.95, 0.92, 0.85), Vector3(-s * 0.14, head_y - s * 0.22, -s * 0.31), model)
-			_box(Vector3(s * 0.09, s * 0.16, 0.05), Color(0.95, 0.92, 0.85), Vector3(s * 0.14, head_y - s * 0.22, -s * 0.31), model)
-			for arm in [_arm_l, _arm_r]:
-				_box(Vector3(s * 0.38, s * 0.14, s * 0.38), _color.darkened(0.4), Vector3(0, s * 0.03, 0), arm)
-				_box(Vector3(s * 0.3, s * 0.24, s * 0.32), Color(0.85, 0.72, 0.6), Vector3(0, -s * 0.78, 0), arm)
-		"archer":
-			# Arc en main gauche + carquois dans le dos.
-			var wood := Color(0.45, 0.30, 0.15)
-			_box(Vector3(0.05, s * 1.2, 0.05), wood, Vector3(0, -s * 0.55, -s * 0.15), _arm_l)
-			_box(Vector3(0.04, s * 0.25, 0.04), wood.darkened(0.2), Vector3(0, s * 0.05, -s * 0.22), _arm_l)
-			_box(Vector3(0.04, s * 0.25, 0.04), wood.darkened(0.2), Vector3(0, -s * 1.15, -s * 0.22), _arm_l)
-			var quiver := _box(Vector3(s * 0.26, s * 0.6, s * 0.2), wood.darkened(0.3), Vector3(s * 0.18, hip + s * 0.5, s * 0.32), model)
-			quiver.rotation.z = 0.25
 
 # ---------- IA ----------
 
@@ -210,24 +132,14 @@ func _physics_process(delta: float) -> void:
 	if not in_water and not is_on_floor():
 		velocity.y -= gravity * delta
 
-	# Roulade en cours : trajectoire forcée + invincibilité. Galipette autour
-	# du centre du corps (offset compensé), membres repliés.
+	# Roulade en cours : trajectoire forcée + invincibilité. La galipette est
+	# le clip "roll" (lancé par _try_roll), autour du pivot RollCenter.
 	if _roll_timer > 0.0:
 		_roll_timer -= delta
 		velocity.x = _roll_dir.x * ROLL_SPEED
 		velocity.z = _roll_dir.z * ROLL_SPEED
-		model.rotation.x = -TAU * (1.0 - maxf(_roll_timer, 0.0) / ROLL_DURATION)
-		var c := Vector3.UP * (_size * 0.9)
-		model.position = c - model.basis * c
-		for limb in [_arm_l, _arm_r, _leg_l, _leg_r]:
-			if limb != null:
-				limb.rotation.x = lerpf(limb.rotation.x, 1.2, 0.5)
 		move_and_slide()
 		return
-	# Sortie de roulade : replie l'angle (-TAU ≡ 0) pour que le lissage de
-	# _animate (bascule de nage, redressement) reparte proprement.
-	model.rotation.x = wrapf(model.rotation.x, -PI, PI)
-	model.position = Vector3.ZERO
 
 	if player == null or not is_instance_valid(player):
 		player = get_tree().get_first_node_in_group("player")
@@ -343,11 +255,22 @@ func _try_roll(dir: Vector3) -> bool:
 	_stamina -= ROLL_COST
 	_roll_dir = dir.normalized()
 	_roll_timer = ROLL_DURATION
+	_play_move("roll", 1.0, 0.1)
 	return true
+
+# Pilote le clip de locomotion (voir la scène) : speed règle la cadence,
+# le changement de clip est fondu. Le slime n'a pas d'AnimationPlayer.
+func _play_move(anim_name: String, speed: float, blend := 0.25) -> void:
+	if _anim == null:
+		return
+	_anim.speed_scale = speed
+	if _anim.current_animation != anim_name:
+		_anim.play(anim_name, blend)
 
 func _animate(delta: float, move: Vector3, in_water := false) -> void:
 	if _hops:
-		# Slime : s'étire en l'air, s'écrase à l'atterrissage.
+		# Slime : s'étire en l'air, s'écrase à l'atterrissage. Piloté en code
+		# (pas un clip) : la pose dépend de la physique (bond, chute, flottaison).
 		var target_s := 1.0
 		if in_water:
 			target_s = 1.0 + sin(_strafe_t * 3.0) * 0.06 # ondule en flottant
@@ -360,28 +283,17 @@ func _animate(delta: float, move: Vector3, in_water := false) -> void:
 	if _leg_l == null:
 		return
 	if in_water:
-		# Nage : le corps bascule vers l'avant, bras qui pagaient en alternance
-		# et battements de jambes — cohérent avec le crawl du joueur.
+		# Nage : le corps bascule vers l'avant (physique -> code), bras/jambes
+		# par le clip "swim" — cohérent avec le crawl du joueur.
 		model.rotation.x = lerpf(model.rotation.x, -0.9 if move.length() > 0.1 else -0.25, 4.0 * delta)
-		_bob_t += delta * 4.0
-		_arm_l.rotation.x = sin(_bob_t * 1.5) * 0.9
-		_arm_r.rotation.x = -sin(_bob_t * 1.5) * 0.9
-		_leg_l.rotation.x = sin(_bob_t * 3.0) * 0.4
-		_leg_r.rotation.x = -sin(_bob_t * 3.0) * 0.4
+		_play_move("swim", 4.0)
 		return
 	model.rotation.x = lerpf(model.rotation.x, 0.0, minf(8.0 * delta, 1.0)) # se redresse hors de l'eau
 	if move.length() > 0.1 and is_on_floor():
-		_bob_t += delta * _speed * 1.8
-		var swing := sin(_bob_t) * 0.6
-		_leg_l.rotation.x = swing
-		_leg_r.rotation.x = -swing
-		# Les bras ne se balancent pas pendant l'animation d'attaque (tween).
-		if _attack_timer <= 0.0:
-			_arm_l.rotation.x = -swing * 0.6
-			_arm_r.rotation.x = swing * 0.6
+		# Le GearAnim (coup de bras, arc) repasse par-dessus les bras du clip.
+		_play_move("walk", _speed * 1.8)
 	else:
-		for limb in [_leg_l, _leg_r]:
-			limb.rotation.x = lerpf(limb.rotation.x, 0.0, minf(10.0 * delta, 1.0))
+		_play_move("idle", 1.0)
 
 # ---------- Attaques ----------
 
@@ -389,11 +301,10 @@ func _try_melee() -> void:
 	if _attack_timer > 0.0:
 		return
 	_attack_timer = ATTACK_COOLDOWN
-	# Coup de bras télégraphié.
-	if _arm_r != null:
-		_arm_r.rotation.x = -2.2
-		var tw := create_tween()
-		tw.tween_property(_arm_r, "rotation:x", 0.0, 0.3)
+	# Coup de bras télégraphié : clip du GearAnim (par-dessus la marche).
+	if _gear_anim != null:
+		_gear_anim.stop()
+		_gear_anim.play("attack")
 	if player != null and player.has_method("take_damage"):
 		player.take_damage(_damage, global_position)
 
@@ -408,12 +319,11 @@ func _try_shoot() -> void:
 	var flight_time := origin.distance_to(target) / PROJECTILE_SPEED
 	target += Vector3(pv.x, 0.0, pv.z) * flight_time * 0.85
 	var dir := (target - origin).normalized()
-	# Recul du bras d'arc.
-	if _arm_l != null:
-		_arm_l.rotation.x = -1.4
-		var tw := create_tween()
-		tw.tween_property(_arm_l, "rotation:x", 0.0, 0.4)
-	var p := Projectile.new()
+	# Recul du bras d'arc : clip du GearAnim.
+	if _gear_anim != null:
+		_gear_anim.stop()
+		_gear_anim.play("draw")
+	var p := PROJECTILE_SCENE.instantiate() as Projectile
 	p.setup(dir, PROJECTILE_SPEED, _damage, "player", Color(0.7, 0.4, 0.95), "enemies")
 	get_parent().add_child(p)
 	p.global_position = origin + dir * 0.6
@@ -442,13 +352,13 @@ func _drop_loot() -> void:
 	var parent := get_parent()
 	if parent == null:
 		return
-	var xp := Pickup.new()
+	var xp := PICKUP_SCENE.instantiate() as Pickup
 	xp.kind = Pickup.Kind.XP
 	xp.amount = _xp
 	parent.add_child(xp)
 	xp.global_position = global_position + Vector3(0, 0.6, 0)
 	if randf() < 0.25:
-		var hp := Pickup.new()
+		var hp := PICKUP_SCENE.instantiate() as Pickup
 		hp.kind = Pickup.Kind.HEALTH
 		hp.amount = 25
 		parent.add_child(hp)
@@ -461,7 +371,7 @@ func _drop_loot() -> void:
 			var v = player.get("level")
 			if v != null:
 				lvl = v
-		var it := Pickup.new()
+		var it := PICKUP_SCENE.instantiate() as Pickup
 		it.kind = Pickup.Kind.ITEM
 		it.item = Items.roll_item(lvl)
 		parent.add_child(it)

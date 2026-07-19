@@ -15,7 +15,7 @@ const CUBE := 0.5
 var gen: TerrainGen
 var cx: int
 var cz: int
-var tree_scene: PackedScene
+@export var tree_scene: PackedScene # préréglé dans Scènes/Monde/chunk.tscn
 var water_material: Material # partagé, créé une seule fois par world.gd
 
 func build() -> void:
