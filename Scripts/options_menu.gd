@@ -163,37 +163,6 @@ func _build() -> void:
 	%MouseSensSlider.value = settings.mouse_sens
 	%VolumeSlider.value = settings.volume
 
-	# Navigation.
-	%DisplayNavBtn.pressed.connect(func(): _show_page("display"))
-	%GraphicsNavBtn.pressed.connect(func(): _show_page("graphics"))
-	%GameNavBtn.pressed.connect(func(): _show_page("game"))
-	for back in [%DisplayBackBtn, %GraphicsBackBtn, %GameBackBtn]:
-		back.pressed.connect(func(): _show_page("main"))
-	%ResumeBtn.pressed.connect(func(): _set_open(false))
-	# « Retour au menu » : visible seulement en partie (géré par _set_open).
-	_menu_btn.pressed.connect(func():
-		_set_open(false)
-		if world != null and world.has_method("exit_to_menu"):
-			world.exit_to_menu())
-	%QuitBtn.pressed.connect(func():
-		if world != null and world.has_method("save_progress"):
-			world.save_progress()
-		get_tree().quit())
-
-	# Réglages : chaque contrôle applique + sauvegarde immédiatement.
-	%FullscreenCheck.toggled.connect(func(v: bool): _update_setting("fullscreen", v, _apply_window))
-	_res_btn.item_selected.connect(func(i: int): _update_setting("res_index", i, _apply_window))
-	%UIScaleSlider.value_changed.connect(func(v: float): _update_setting("ui_scale", v, _apply_ui_scale))
-	%RenderScaleSlider.value_changed.connect(func(v: float): _update_setting("render_scale", v, _apply_render_scale))
-	%UpscaleBtn.item_selected.connect(func(i: int): _update_setting("upscale_mode", i, _apply_upscale_mode))
-	%MsaaBtn.item_selected.connect(func(i: int): _update_setting("msaa", i, _apply_msaa))
-	%ShadowsBtn.item_selected.connect(func(i: int): _update_setting("shadows", i, _apply_shadows))
-	%VsyncCheck.toggled.connect(func(v: bool): _update_setting("vsync", v, _apply_vsync))
-	%FpsBtn.item_selected.connect(func(i: int): _update_setting("fps_index", i, _apply_fps))
-	%RenderDistSlider.value_changed.connect(func(v: float): _update_setting("render_distance", int(v), _apply_game))
-	%MouseSensSlider.value_changed.connect(func(v: float): _update_setting("mouse_sens", v, _apply_game))
-	%VolumeSlider.value_changed.connect(func(v: float): _update_setting("volume", v, _apply_game))
-
 	_show_page("main")
 
 func _show_page(page_name: String) -> void:
@@ -219,3 +188,85 @@ func _set_open(open: bool) -> void:
 	else:
 		# Pendant le choix de classe (pas encore de joueur), la souris reste libre.
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if player != null else Input.MOUSE_MODE_VISIBLE
+
+
+func _on_display_nav_btn_pressed() -> void:
+	_show_page("display")
+
+
+func _on_graphics_nav_btn_pressed() -> void:
+	_show_page("graphics")
+
+
+func _on_game_nav_btn_pressed() -> void:
+	_show_page("game")
+
+
+func _on_resume_btn_pressed() -> void:
+	_set_open(false)
+
+
+func _on_display_back_btn_pressed() -> void:
+	_show_page("main")
+
+
+func _on_graphics_back_btn_pressed() -> void:
+	_show_page("main")
+
+
+func _on_game_back_btn_pressed() -> void:
+	_show_page("main")
+
+
+func _on_volume_slider_value_changed(v: float) -> void:
+	_update_setting("volume", v, _apply_game)
+
+
+func _on_mouse_sens_slider_value_changed(v: float) -> void:
+	_update_setting("mouse_sens", v, _apply_game)
+
+
+func _on_render_dist_slider_value_changed(v: float) -> void:
+	_update_setting("render_distance", int(v), _apply_game)
+
+
+func _on_fps_btn_item_selected(i: int) -> void:
+	_update_setting("fps_index", i, _apply_fps)
+
+
+func _on_vsync_check_toggled(v: bool) -> void:
+	_update_setting("vsync", v, _apply_vsync)
+
+
+func _on_shadows_btn_item_selected(i: int) -> void:
+	_update_setting("shadows", i, _apply_shadows)
+
+
+func _on_msaa_btn_item_selected(i: int) -> void:
+	_update_setting("msaa", i, _apply_msaa)
+
+
+func _on_upscale_btn_item_selected(i: int) -> void:
+	_update_setting("upscale_mode", i, _apply_upscale_mode)
+
+
+func _on_render_scale_slider_value_changed(v: float) -> void:
+	_update_setting("render_scale", v, _apply_render_scale)
+
+
+func _on_ui_scale_slider_value_changed(v: float) -> void:
+	_update_setting("ui_scale", v, _apply_ui_scale)
+
+
+func _on_fullscreen_check_toggled(v: bool) -> void:
+	_update_setting("fullscreen", v, _apply_window)
+
+
+func _on_res_btn_item_selected(i: int) -> void:
+	_update_setting("res_index", i, _apply_window)
+
+
+func _on_menu_btn_pressed() -> void:
+	_set_open(false)
+	if world != null and world.has_method("exit_to_menu"):
+		world.exit_to_menu()

@@ -102,20 +102,6 @@ func _ready() -> void:
 	_world_name_edit = %WorldNameEdit
 	_seed_edit = %SeedEdit
 
-	# Navigation et actions des boutons de la scène.
-	%PlayBtn.pressed.connect(func(): _show_page("chars"))
-	%OptionsBtn.pressed.connect(func():
-		if options != null:
-			options._set_open(true))
-	%QuitBtn.pressed.connect(func(): get_tree().quit())
-	%NewCharBtn.pressed.connect(func(): _show_page("newchar"))
-	%CharsBackBtn.pressed.connect(func(): _show_page("home"))
-	%NewCharBackBtn.pressed.connect(func(): _show_page("chars"))
-	%NewWorldBtn.pressed.connect(func(): _show_page("newworld"))
-	%WorldsBackBtn.pressed.connect(func(): _show_page("chars"))
-	%NewWorldBackBtn.pressed.connect(func(): _show_page("worlds"))
-	%CreateWorldBtn.pressed.connect(_create_world_and_play)
-
 	# Cartes de classes : couleurs/stats depuis Player.CLASSES, textes
 	# descriptifs depuis ClassSelect.CARDS — données de jeu, donc remplies ici
 	# plutôt que dupliquées dans la scène.
@@ -266,3 +252,44 @@ func _parse_seed(text: String) -> int:
 	if text.is_valid_int():
 		return text.to_int()
 	return text.hash()
+
+
+func _on_play_btn_pressed() -> void:
+	_show_page("chars")
+
+
+func _on_options_btn_pressed() -> void:
+	if options != null:
+			options._set_open(true)
+
+
+func _on_quit_btn_pressed() -> void:
+	get_tree().quit()
+
+
+func _on_new_char_btn_pressed() -> void:
+	_show_page("newchar")
+
+
+func _on_chars_back_btn_pressed() -> void:
+	_show_page("home")
+
+
+func _on_new_char_back_btn_pressed() -> void:
+	_show_page("chars")
+
+
+func _on_new_world_btn_pressed() -> void:
+	_show_page("newworld")
+
+
+func _on_worlds_back_btn_pressed() -> void:
+	_show_page("chars")
+
+
+func _on_new_world_back_btn_pressed() -> void:
+	_show_page("worlds")
+
+
+func _on_create_world_btn_pressed() -> void:
+	_create_world_and_play()

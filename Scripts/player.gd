@@ -5,7 +5,7 @@ extends CharacterBody3D
 # le corps voxel, l'arme, la caméra orbitale, la hitbox et les clips
 # d'animation (walk/idle/swim/roll + attack/recoil) vivent dans les scènes de
 # classe Scènes/Acteurs/*.tscn (régénérables par tools/gen_actor_scenes.gd).
-# Ici on récupère les nœuds, on pilote les AnimationPlayer (play/speed_scale)
+# Ici on récupèhtre les nœuds, on pilote les AnimationPlayer (play/speed_scale)
 # et on applique les stats de CLASSES (class_id préréglé par la scène).
 
 const PROJECTILE_SCENE := preload("res://Scènes/Objets/projectile.tscn")
@@ -192,7 +192,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			_try_attack()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			_try_special()
-	elif event.is_action_pressed("lantern"):
+	elif event.is_action_pressed("Lantern"):
 		toggle_lantern()
 
 func _physics_process(delta: float) -> void:
@@ -235,10 +235,10 @@ func _physics_process(delta: float) -> void:
 		return
 	model.rotation.x = lerpf(model.rotation.x, 0.0, 8.0 * delta) # se redresse en sortant de l'eau
 
-	if Input.is_action_just_pressed("ui_accept") and is_on_floor():
+	if Input.is_action_pressed("Jump") and is_on_floor():
 		velocity.y = JUMP_VELOCITY
 
-	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	var input_dir := Input.get_vector("Go left", "Go right", "Go forward", "Go backward")
 
 	# Déplacement relatif à l'orientation de la caméra (on ignore le pitch).
 	var cam_basis := cam_pivot.global_transform.basis
@@ -250,12 +250,12 @@ func _physics_process(delta: float) -> void:
 	right = right.normalized()
 	var move_dir := (right * input_dir.x - forward * input_dir.y).normalized()
 
-	if Input.is_action_just_pressed("roll") and is_on_floor() and stamina >= ROLL_COST:
+	if Input.is_action_just_pressed("Roll") and is_on_floor() and stamina >= ROLL_COST:
 		_start_roll(move_dir)
 		return
 
 	# Le sprint consomme de l'endurance ; à sec, on retombe à la vitesse normale.
-	var sprinting := Input.is_key_pressed(KEY_SHIFT) and stamina > 0.5 and move_dir.length() > 0.01
+	var sprinting := Input.is_action_pressed("Run") and stamina > 0.5 and move_dir.length() > 0.01
 	if sprinting:
 		stamina = maxf(0.0, stamina - STAMINA_SPRINT_DRAIN * delta)
 		_stamina_delay = STAMINA_REGEN_DELAY
@@ -313,8 +313,8 @@ func water_depth() -> float:
 	return TerrainGen.WATER_Y * Chunk.CUBE - global_position.y
 
 func _swim_process(delta: float, depth: float) -> void:
-	var speed := move_speed * SWIM_SPEED_FACTOR * (1.4 if Input.is_key_pressed(KEY_SHIFT) else 1.0)
-	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	var speed := move_speed * SWIM_SPEED_FACTOR * (1.4 if Input.is_action_pressed("Run") else 1.0)
+	var input_dir := Input.get_vector("Go left", "Go right", "Go forward", "Go backward")
 
 	# Contrairement à la marche, on garde le pitch de la caméra : viser le fond
 	# et avancer fait plonger, viser la surface fait remonter.
@@ -332,7 +332,7 @@ func _swim_process(delta: float, depth: float) -> void:
 	velocity.x = move_toward(velocity.x, move_dir.x * speed, SWIM_ACCEL * delta)
 	velocity.z = move_toward(velocity.z, move_dir.z * speed, SWIM_ACCEL * delta)
 
-	if Input.is_action_just_pressed("ui_accept") and depth < SWIM_ENTER_DEPTH + 0.3:
+	if Input.is_action_just_pressed("Jump") and depth < SWIM_ENTER_DEPTH + 0.3:
 		velocity.y = JUMP_VELOCITY * 0.85 # près de la surface : bond pour sortir sur la rive
 	else:
 		# Flottabilité : on tend vers la profondeur d'équilibre (tête hors de l'eau).
@@ -343,7 +343,7 @@ func _swim_process(delta: float, depth: float) -> void:
 		if lift > 0.0:
 			lift *= clampf((depth - SWIM_EXIT_DEPTH) / 0.5, 0.0, 1.0)
 		target_v += lift
-		if Input.is_action_pressed("ui_accept"):
+		if Input.is_action_pressed("Jump"):
 			target_v = SWIM_UP_SPEED
 		velocity.y = move_toward(velocity.y, target_v, WATER_DRAG * delta)
 
