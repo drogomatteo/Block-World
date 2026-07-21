@@ -99,7 +99,6 @@ var _menu: MainMenu                 # menu principal (null une fois en jeu)
 var _current_char := {}             # personnage en cours (sauvegardé via MainMenu)
 
 func _ready() -> void:
-	_setup_input()
 	chunk_size = Chunk.SIZE
 
 	_make_hud()
@@ -200,26 +199,6 @@ func exit_to_menu() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		save_progress()
-
-# Déplacement en ZQSD (clavier AZERTY). Configuré ici en code pour ne pas risquer
-# de corrompre project.godot ; ça remplace l'usage des flèches directionnelles.
-func _setup_input() -> void:
-	_bind_key("move_forward", KEY_Z)
-	_bind_key("move_back", KEY_S)
-	_bind_key("move_left", KEY_Q)
-	_bind_key("move_right", KEY_D)
-	_bind_key("inventory", KEY_I)
-	_bind_key("lantern", KEY_G)
-	_bind_key("roll", KEY_CTRL)
-
-func _bind_key(action: String, keycode: Key) -> void:
-	if InputMap.has_action(action):
-		InputMap.action_erase_events(action)
-	else:
-		InputMap.add_action(action)
-	var ev := InputEventKey.new()
-	ev.keycode = keycode
-	InputMap.action_add_event(action, ev)
 
 func set_render_distance(v: int) -> void:
 	render_distance = clampi(v, 1, 12)
