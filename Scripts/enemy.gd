@@ -246,8 +246,12 @@ func _separation() -> Vector3:
 	return push.limit_length(1.0)
 
 # Roulade d'esquive (types agiles) : coûte de l'endurance.
+# Dans l'eau, elle n'est permise que si l'ennemi a PIED (contact au sol) —
+# même règle que le joueur : pas d'esquive en pleine flottaison.
 func _try_roll(dir: Vector3) -> bool:
 	if not _agile or _stamina < ROLL_COST or _roll_timer > 0.0:
+		return false
+	if _water_depth() > _size and not is_on_floor():
 		return false
 	dir.y = 0.0
 	if dir.length() < 0.01:

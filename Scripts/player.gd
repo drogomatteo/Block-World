@@ -14,6 +14,12 @@ const JUMP_VELOCITY := 6.5
 const DASH_SPEED := 18.0
 const DASH_DURATION := 0.22
 
+# Auto-montée : une marche d'AU PLUS un cube n'est pas un obstacle — le joueur
+# est posé INSTANTANÉMENT dessus, sans saut ni perte de vitesse. Pilotée par
+# les COLLISIONS réelles (après move_and_slide), pas par une prédiction sur le
+# terrain. Au-delà d'un cube (mur de 2+), il faut toujours sauter.
+const AUTO_STEP_MAX := 1.1  # hauteur max de marche, en cubes (marge d'arrondi)
+
 # Nage : on bascule en nage quand les pieds sont à SWIM_ENTER_DEPTH sous la
 # surface (eau à hauteur de poitrine) ; la flottabilité ramène vers FLOAT_DEPTH
 # (tête hors de l'eau). Espace = remonter, viser le fond + avancer = plonger.
@@ -218,6 +224,8 @@ func _physics_process(delta: float) -> void:
 		_roll_timer -= delta
 		velocity.x = _roll_dir.x * ROLL_SPEED
 		velocity.z = _roll_dir.z * ROLL_SPEED
+		# Si la roulade part de la nage, le corps était basculé : on le redresse.
+		model.rotation.x = lerpf(model.rotation.x, 0.0, 8.0 * delta)
 		move_and_slide()
 		return
 
@@ -275,6 +283,35 @@ func _physics_process(delta: float) -> void:
 		_play_move("idle", 1.0)
 
 	move_and_slide()
+	_auto_step(move_dir)
+
+# ---------- Auto-montée ----------
+
+# Appelée APRÈS move_and_slide : on n'agit que si le corps a RÉELLEMENT buté
+# contre un mur bas face au déplacement (get_slide_collision), plus aucune
+# prédiction sur le terrain — donc jamais soulevé « pour rien » sans finir sur
+# le bloc. La place au-dessus de la marche est validée avec la vraie capsule
+# (test_move) : marche décentrée gravie, fente plus étroite que le corps, mur
+# de 2+ cubes ou tronc d'arbre refusés d'office. Si c'est libre : on monte,
+# on avance sur la marche et on redescend au contact du sol.
+func _auto_step(move_dir: Vector3) -> void:
+	if not is_on_floor() or move_dir.length() < 0.01:
+		return
+	var blocked := false
+	for i in get_slide_collision_count():
+		var n := get_slide_collision(i).get_normal()
+		if n.y < 0.5 and n.dot(move_dir) < -0.5:
+			blocked = true
+			break
+	if not blocked:
+		return
+	var up := Vector3.UP * (Chunk.CUBE * AUTO_STEP_MAX)
+	var fwd := move_dir * 0.25
+	if test_move(global_transform, up) \
+			or test_move(global_transform.translated(up), fwd):
+		return # pas la place au-dessus : vrai obstacle, il faudra sauter
+	global_position += up + fwd
+	move_and_collide(Vector3.DOWN * (Chunk.CUBE * AUTO_STEP_MAX + 0.05))
 
 # ---------- Animations / roulade ----------
 
@@ -332,6 +369,13 @@ func _swim_process(delta: float, depth: float) -> void:
 	velocity.x = move_toward(velocity.x, move_dir.x * speed, SWIM_ACCEL * delta)
 	velocity.z = move_toward(velocity.z, move_dir.z * speed, SWIM_ACCEL * delta)
 
+	# Roulade dans l'eau : autorisée seulement si on a PIED (contact au sol) —
+	# en pleine flottaison, pas d'appui, donc pas d'esquive.
+	if Input.is_action_just_pressed("Roll") and is_on_floor() and stamina >= ROLL_COST:
+		var flat := Vector3(move_dir.x, 0.0, move_dir.z)
+		_start_roll(flat)
+		return
+
 	if Input.is_action_just_pressed("Jump") and depth < SWIM_ENTER_DEPTH + 0.3:
 		velocity.y = JUMP_VELOCITY * 0.85 # près de la surface : bond pour sortir sur la rive
 	else:
@@ -359,8 +403,8 @@ func _swim_process(delta: float, depth: float) -> void:
 # ---------- Attaques ----------
 
 func _try_attack() -> void:
-	if _attack_timer > 0.0:
-		return
+	if _attack_timer > 0.0 or _roll_timer > 0.0:
+		return # pas d'attaque pendant la roulade (esquive, pas offensive)
 	_attack_timer = attack_cooldown
 	if _ranged:
 		_recoil()
@@ -383,8 +427,8 @@ func _shoot(damage_mult: float, yaw_offset: float) -> void:
 	p.global_position = global_position + Vector3(0, 1.2, 0) + dir * 0.9
 
 func _try_special() -> void:
-	if special_timer > 0.0:
-		return
+	if special_timer > 0.0 or _roll_timer > 0.0:
+		return # pas de spécial pendant la roulade non plus
 	special_timer = special_cooldown
 	match class_id:
 		"warrior":

@@ -8,14 +8,16 @@ extends Node3D
 # à la position monde (cx*SIZE*CUBE, 0, cz*SIZE*CUBE) par world.gd.
 
 const SIZE := 16
-# Taille MONDE d'un cube (des blocs plus fins, façon Cube World). TerrainGen
-# travaille en indices de cube ; tout ce qui parle en mètres passe par CUBE.
-const CUBE := 0.5
+# Taille MONDE d'un cube : le TIERS de la taille du joueur (capsule 1.8 m).
+# TerrainGen travaille en indices de cube ; tout ce qui parle en mètres passe par CUBE.
+const CUBE := 0.6
 
 var gen: TerrainGen
 var cx: int
 var cz: int
-@export var tree_scene: PackedScene # préréglé dans Scènes/Monde/chunk.tscn
+# Les 5 variantes d'arbre voxel (générées par tools/gen_tree_scene.gd),
+# préréglées dans Scènes/Monde/chunk.tscn.
+@export var tree_scenes: Array[PackedScene] = []
 var water_material: Material # partagé, créé une seule fois par world.gd
 
 func build() -> void:
@@ -97,7 +99,7 @@ func _build_collision() -> void:
 	add_child(body)
 
 func _build_trees() -> void:
-	if tree_scene == null:
+	if tree_scenes.is_empty():
 		return
 	for lx in SIZE:
 		for lz in SIZE:
@@ -105,14 +107,17 @@ func _build_trees() -> void:
 			var wz := cz * SIZE + lz
 			if gen.has_tree(wx, wz):
 				var h := gen.get_height(wx, wz)
-				var t := tree_scene.instantiate()
+				# Variante tirée au sort (déterministe) : forêt dépareillée.
+				var variant := int(gen.rand01(wx, wz, 24) * tree_scenes.size()) % tree_scenes.size()
+				var t := tree_scenes[variant].instantiate()
 				add_child(t)
-				# Position à l'échelle cube ; l'arbre garde sa taille MONDE
-				# (il couvre plusieurs petits blocs, comme dans Cube World).
+				# Position à l'échelle cube : les cubes de l'arbre (générés par
+				# tools/gen_tree_scene.gd à la taille CUBE) tombent pile sur la
+				# grille du monde. Plus de mise à l'échelle aléatoire — elle
+				# casserait l'uniformité des cubes ; la variation vient d'une
+				# rotation par quarts de tour (déterministe), qui préserve la grille.
 				t.position = Vector3(lx * CUBE, (float(h) + 0.5) * CUBE, lz * CUBE)
-				# Variation de taille déterministe : forêt moins uniforme.
-				var s := 0.8 + gen.rand01(wx, wz, 13) * 0.6
-				t.scale = Vector3(s, s, s)
+				t.rotation.y = float(int(gen.rand01(wx, wz, 13) * 4.0)) * (PI * 0.5)
 
 # Décorations (herbe, fleurs, cactus, rochers) : un seul MultiMesh de plus
 # par chunk, mise à l'échelle par instance via la Basis du transform.

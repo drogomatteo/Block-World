@@ -3,8 +3,9 @@ extends SceneTree
 # Test de fumée headless : godot --headless -s res://tests/smoke.gd
 # Charge le monde (menu principal), teste la persistance des profils, lance une
 # session avec un seed fixe puis vérifie joueur (corps articulé, endurance,
-# roulade), caméra, lanterne, cycle jour/nuit, génération (eau/arbres/déco),
-# nage (hystérésis comprise), effet sous-marin et ennemis.
+# roulade), caméra, lanterne, cycle jour/nuit, génération (océan/coraux/plages,
+# arbres/déco), nage (hystérésis comprise), effet sous-marin, auto-montée
+# d'une marche d'un cube et ennemis.
 
 var fails := 0
 
@@ -14,6 +15,46 @@ func check(cond: bool, label: String) -> void:
 	else:
 		fails += 1
 		printerr("FAIL - ", label)
+
+# Pose le joueur sur la colonne (col.x - 1, col.y), oriente la caméra pour que
+# « avancer » aille vers +X et MAINTIENT la touche : l'auto-montée étant
+# déclenchée par les collisions réelles, on vérifie le résultat physique.
+# Renvoie true si le joueur finit DEBOUT sur la colonne col.x + 1 (marche gravie).
+func drive_forward(player, col: Vector2i, gen: TerrainGen) -> bool:
+	var h := gen.get_height(col.x - 1, col.y)
+	player.global_position = Vector3((col.x - 1) * Chunk.CUBE,
+		(float(h) + 0.5) * Chunk.CUBE + 0.02, col.y * Chunk.CUBE)
+	player.velocity = Vector3.ZERO
+	player.cam_pivot.rotation.y = -PI / 2 # « Go forward » = +X
+	var target_top := (float(gen.get_height(col.x + 1, col.y)) + 0.5) * Chunk.CUBE
+	var climbed := false
+	Input.action_press("Go forward")
+	for i in 50:
+		await physics_frame
+		if roundi(player.global_position.x / Chunk.CUBE) >= col.x + 1 \
+				and absf(player.global_position.y - target_top) < 0.35:
+			climbed = true
+			break
+	Input.action_release("Go forward")
+	return climbed
+
+# Même conduite, mais on surveille si le joueur s'est fait REHAUSSER (il ne
+# doit pas : mur de 2+ ou fente trop étroite). Renvoie true s'il est monté.
+func drive_expect_blocked(player, col: Vector2i, gen: TerrainGen) -> bool:
+	var h := gen.get_height(col.x - 1, col.y)
+	var start_y := (float(h) + 0.5) * Chunk.CUBE + 0.02
+	player.global_position = Vector3((col.x - 1) * Chunk.CUBE, start_y, col.y * Chunk.CUBE)
+	player.velocity = Vector3.ZERO
+	player.cam_pivot.rotation.y = -PI / 2
+	var rose := false
+	Input.action_press("Go forward")
+	for i in 50:
+		await physics_frame
+		if player.global_position.y > start_y + 0.35:
+			rose = true
+			break
+	Input.action_release("Go forward")
+	return rose
 
 func _initialize() -> void:
 	_run()
@@ -99,33 +140,247 @@ func _run() -> void:
 	await process_frame
 	check(world._menu == null, "le menu est fermé une fois la session lancée")
 
-	# --- Génération : seuil de l'eau ---
+	# --- Génération : cubes, océan, seuil de l'eau ---
 	var gen: TerrainGen = world.gen
 	check(gen != null, "générateur créé avec la graine du monde")
+	check(absf(Chunk.CUBE - 0.6) < 0.001, "cube = 1/3 de la taille du joueur (0.6 m pour 1.8 m)")
+
+	# Le spawn est choisi par le monde : toujours sur la terre ferme.
+	var spawn_col := Vector2i(roundi(world._spawn_pos.x / Chunk.CUBE), roundi(world._spawn_pos.z / Chunk.CUBE))
+	check(float(gen.get_height(spawn_col.x, spawn_col.y)) + 0.5 >= TerrainGen.WATER_Y + 1.0,
+		"le point d'apparition est émergé (les océans sont grands)")
+
+	# Cherche un point d'océan PROFOND en spirale (anneaux de 32 cubes).
+	var deep_pos := Vector2i.ZERO
+	var found_ocean := false
+	for ring in 400:
+		var d := ring * 32
+		var pts: Array[Vector2i] = []
+		if ring == 0:
+			pts.append(Vector2i(0, 0))
+		for i in range(-ring, ring + 1):
+			if ring > 0:
+				pts.append_array([Vector2i(i * 32, -d), Vector2i(i * 32, d),
+					Vector2i(-d, i * 32), Vector2i(d, i * 32)])
+		for p in pts:
+			if gen.get_biome(p.x, p.y) == TerrainGen.Biome.OCEAN \
+					and float(gen.get_height(p.x, p.y)) + 0.5 < TerrainGen.WATER_Y - 5.0:
+				deep_pos = p
+				found_ocean = true
+				break
+		if found_ocean:
+			break
+	check(found_ocean, "un océan profond existe à distance raisonnable (%s)" % deep_pos)
+
+	# Transect du large vers le spawn : on doit croiser du fond marin, une
+	# plage puis de la terre (plateau continental = côte progressive).
 	var submerged := 0
 	var beach := 0
-	var deepest := 0.0            # lac le plus profond trouvé (pour le test de nage)
-	var deep_pos := Vector2i.ZERO
-	for x in range(-160, 160, 2):
-		for z in range(-160, 160, 2):
-			var top := float(gen.get_height(x, z)) + 0.5
-			if top < TerrainGen.WATER_Y:
-				submerged += 1
-				if TerrainGen.WATER_Y - top > deepest:
-					deepest = TerrainGen.WATER_Y - top
-					deep_pos = Vector2i(x, z)
-				if gen.has_tree(x, z):
-					fails += 1
-					printerr("FAIL - arbre sous l'eau en (%d, %d)" % [x, z])
-				if not gen.get_decoration(x, z).is_empty():
-					fails += 1
-					printerr("FAIL - déco sous l'eau en (%d, %d)" % [x, z])
-			elif top < TerrainGen.WATER_Y + 1.0: # bande de plage (1 cube)
-				beach += 1
-				if gen.has_tree(x, z):
-					fails += 1
-					printerr("FAIL - arbre sur la plage en (%d, %d)" % [x, z])
-	check(submerged > 0, "l'échantillon contient des colonnes immergées (%d) et de plage (%d)" % [submerged, beach])
+	var emerged := 0
+	var trees_underwater := 0
+	var steps := maxi(absi(spawn_col.x - deep_pos.x), absi(spawn_col.y - deep_pos.y))
+	for s in steps + 1:
+		var t := float(s) / float(maxi(steps, 1))
+		var x := roundi(lerpf(float(deep_pos.x), float(spawn_col.x), t))
+		var z := roundi(lerpf(float(deep_pos.y), float(spawn_col.y), t))
+		var top := float(gen.get_height(x, z)) + 0.5
+		if top < TerrainGen.WATER_Y:
+			submerged += 1
+			if gen.has_tree(x, z):
+				trees_underwater += 1
+		elif top < TerrainGen.WATER_Y + 1.0: # bande de plage (1 cube)
+			beach += 1
+		else:
+			emerged += 1
+	check(submerged > 0 and beach > 0 and emerged > 0,
+		"transect océan→spawn : fond marin (%d), plage (%d), terre (%d)" % [submerged, beach, emerged])
+	check(trees_underwater == 0, "aucun arbre sous l'eau sur le transect")
+
+	# Coraux (colonnes fines colorées) et roches aquatiques sur le fond marin.
+	var corals := 0
+	var rocks := 0
+	for dx in range(-48, 49, 2):
+		for dz in range(-48, 49, 2):
+			var deco := gen.get_decoration(deep_pos.x + dx, deep_pos.y + dz)
+			if deco.is_empty():
+				continue
+			if (deco["size"] as Vector3).x < 0.3:
+				corals += 1
+			else:
+				rocks += 1
+	check(corals > 0 and rocks > 0, "fond marin décoré : %d coraux, %d roches aquatiques" % [corals, rocks])
+
+	# Hors océan : la seule eau est celle des fleuves (plus de lacs aléatoires).
+	var stray_water := 0
+	for dx in range(-160, 161, 4):
+		for dz in range(-160, 161, 4):
+			var x := spawn_col.x + dx
+			var z := spawn_col.y + dz
+			if gen.get_biome(x, z) == TerrainGen.Biome.OCEAN:
+				continue
+			if float(gen.get_height(x, z)) + 0.5 < TerrainGen.WATER_Y and not gen.is_river(x, z):
+				stray_water += 1
+	check(stray_water == 0, "l'eau terrestre vient uniquement des fleuves (pas de lacs, %d intrus)" % stray_water)
+
+	# --- Sable uniquement PRÈS d'une vraie colonne d'eau ---
+	# Un creux de terrain intérieur au niveau de la mer (le relief est clampé
+	# juste au-dessus de WATER_Y) ne doit PLUS devenir une plage fantôme.
+	var sand := Color(0.80, 0.73, 0.52)
+	var low_dry := 0      # colonnes basses SANS eau à proximité...
+	var low_dry_sand := 0 # ... coloriées en sable à tort
+	var shore_sand := false
+	for dx in range(-120, 121, 2):
+		for dz in range(-120, 121, 2):
+			var x := spawn_col.x + dx
+			var z := spawn_col.y + dz
+			var b := gen.get_biome(x, z)
+			if b == TerrainGen.Biome.DESERT or b == TerrainGen.Biome.SNOW or b == TerrainGen.Biome.OCEAN:
+				continue
+			var h := gen.get_height(x, z)
+			var top := float(h) + 0.5
+			if top < TerrainGen.WATER_Y or top >= TerrainGen.WATER_Y + 1.0:
+				continue # seule la bande basse est candidate au sable
+			var colr := gen.get_color(x, z, h, h)
+			if gen.near_water(x, z):
+				shore_sand = shore_sand or colr.is_equal_approx(sand)
+			else:
+				low_dry += 1
+				if colr.is_equal_approx(sand):
+					low_dry_sand += 1
+	check(low_dry_sand == 0,
+		"aucune plage fantôme loin de l'eau (%d colonne(s) basse(s) sèche(s), 0 en sable)" % low_dry)
+	check(shore_sand, "le sable borde toujours l'eau réelle")
+
+	# Une rivière terrestre existe : colonne creusée sous le niveau de l'eau,
+	# hors océan (recherche en spirale, anneaux de 16 cubes).
+	var river_pos := Vector2i.ZERO
+	var found_river := false
+	for ring in 300:
+		var rd := ring * 16
+		var rpts: Array[Vector2i] = []
+		if ring == 0:
+			rpts.append(Vector2i(0, 0))
+		for i in range(-ring, ring + 1):
+			if ring > 0:
+				rpts.append_array([Vector2i(i * 16, -rd), Vector2i(i * 16, rd),
+					Vector2i(-rd, i * 16), Vector2i(rd, i * 16)])
+		for p in rpts:
+			if gen.is_river(p.x, p.y) and gen.get_biome(p.x, p.y) != TerrainGen.Biome.OCEAN:
+				river_pos = p
+				found_river = true
+				break
+		if found_river:
+			break
+	check(found_river, "une rivière terrestre existe (trouvée en %s)" % river_pos)
+	if found_river:
+		check(float(gen.get_height(river_pos.x, river_pos.y)) + 0.5 < TerrainGen.WATER_Y,
+			"le lit de la rivière est creusé sous le niveau de l'eau")
+		# Calibre « fleuve » : la meilleure section immergée doit être large.
+		var best_x := 0
+		var run := 0
+		for dx in range(-40, 41):
+			if float(gen.get_height(river_pos.x + dx, river_pos.y)) + 0.5 < TerrainGen.WATER_Y:
+				run += 1
+				best_x = maxi(best_x, run)
+			else:
+				run = 0
+		var best_z := 0
+		run = 0
+		for dz in range(-40, 41):
+			if float(gen.get_height(river_pos.x, river_pos.y + dz)) + 0.5 < TerrainGen.WATER_Y:
+				run += 1
+				best_z = maxi(best_z, run)
+			else:
+				run = 0
+		var width := maxi(best_x, best_z)
+		check(width >= 14, "le fleuve est large (%d colonnes ≈ %.1f m d'eau)" % [width, width * Chunk.CUBE])
+		# Lit du fleuve : décoré (plantes aquatiques, pierres) et PAS plat.
+		var plants := 0
+		var stones := 0
+		var bed_min := 99999
+		var bed_max := -99999
+		for dx2 in range(-40, 41):
+			for dz2 in range(-40, 41):
+				var x2 := river_pos.x + dx2
+				var z2 := river_pos.y + dz2
+				if not gen.is_river(x2, z2):
+					continue
+				var hh := gen.get_height(x2, z2)
+				bed_min = mini(bed_min, hh)
+				bed_max = maxi(bed_max, hh)
+				var rdeco := gen.get_decoration(x2, z2)
+				if rdeco.is_empty():
+					continue
+				if (rdeco["size"] as Vector3).x < 0.2:
+					plants += 1
+				else:
+					stones += 1
+		check(plants > 0 and stones > 0, "lit du fleuve décoré : %d plantes, %d pierres" % [plants, stones])
+		check(bed_max - bed_min >= 2, "le fond du fleuve a du relief (%d..%d cubes)" % [bed_min, bed_max])
+
+	# Plus d'arbres en montagne : on cherche une zone MOUNTAINS et on vérifie.
+	var mtn := Vector2i.ZERO
+	var found_mtn := false
+	for ring in 400:
+		var md := ring * 32
+		var mpts: Array[Vector2i] = []
+		if ring == 0:
+			mpts.append(Vector2i(0, 0))
+		for i in range(-ring, ring + 1):
+			if ring > 0:
+				mpts.append_array([Vector2i(i * 32, -md), Vector2i(i * 32, md),
+					Vector2i(-md, i * 32), Vector2i(md, i * 32)])
+		for p in mpts:
+			if gen.get_biome(p.x, p.y) == TerrainGen.Biome.MOUNTAINS:
+				mtn = p
+				found_mtn = true
+				break
+		if found_mtn:
+			break
+	check(found_mtn, "un biome montagne existe (trouvé en %s)" % mtn)
+	if found_mtn:
+		var mtn_trees := 0
+		for dx in range(-40, 41):
+			for dz in range(-40, 41):
+				var x := mtn.x + dx
+				var z := mtn.y + dz
+				if gen.get_biome(x, z) == TerrainGen.Biome.MOUNTAINS and gen.has_tree(x, z):
+					mtn_trees += 1
+		check(mtn_trees == 0, "aucun arbre en montagne (%d trouvé(s))" % mtn_trees)
+
+	# Espacement des arbres (grille jitterée) : jamais deux arbres collés.
+	var forest := Vector2i.ZERO
+	var found_forest := false
+	for ring in 400:
+		var fd := ring * 32
+		var fpts: Array[Vector2i] = []
+		if ring == 0:
+			fpts.append(Vector2i(0, 0))
+		for i in range(-ring, ring + 1):
+			if ring > 0:
+				fpts.append_array([Vector2i(i * 32, -fd), Vector2i(i * 32, fd),
+					Vector2i(-fd, i * 32), Vector2i(fd, i * 32)])
+		for p in fpts:
+			if gen.get_biome(p.x, p.y) == TerrainGen.Biome.FOREST:
+				forest = p
+				found_forest = true
+				break
+		if found_forest:
+			break
+	check(found_forest, "un biome forêt existe (trouvé en %s)" % forest)
+	if found_forest:
+		var trees: Array[Vector2i] = []
+		for dx in range(-60, 61):
+			for dz in range(-60, 61):
+				if gen.has_tree(forest.x + dx, forest.y + dz):
+					trees.append(Vector2i(forest.x + dx, forest.y + dz))
+		check(trees.size() >= 2, "la forêt contient des arbres (%d sur 72×72 m)" % trees.size())
+		var min_d2 := 99999999
+		for i in trees.size():
+			for j in range(i + 1, trees.size()):
+				min_d2 = mini(min_d2, (trees[i] - trees[j]).length_squared())
+		if trees.size() >= 2:
+			check(min_d2 >= 25, "arbres jamais collés (distance min %.1f m)" % (sqrt(float(min_d2)) * Chunk.CUBE))
 
 	# Laisse le streaming construire tous les chunks (1/frame, render distance
 	# éventuellement remontée par le settings.cfg de la machine).
@@ -150,14 +405,14 @@ func _run() -> void:
 	check(arm is SpringArm3D, "caméra montée sur SpringArm3D")
 
 	# --- Lanterne (touche G) ---
-	check(InputMap.has_action("lantern"), "action 'lantern' enregistrée")
+	check(InputMap.has_action("Lantern"), "action 'Lantern' enregistrée")
 	check(player._lantern != null and not player._lantern.visible, "lanterne éteinte au départ")
 	player.toggle_lantern()
 	check(player._lantern.visible, "toggle_lantern allume la lanterne")
 	player.toggle_lantern()
 
 	# --- Endurance + roulade ---
-	check(InputMap.has_action("roll"), "action 'roll' (Ctrl) enregistrée")
+	check(InputMap.has_action("Roll"), "action 'Roll' (Ctrl) enregistrée")
 	check(world._stamina_bar != null, "jauge d'endurance au HUD")
 	check(absf(player.stamina - Player.STAMINA_MAX) < 0.01, "endurance pleine au départ")
 	var hp_before_roll: int = player.health
@@ -166,6 +421,11 @@ func _run() -> void:
 	check(player.stamina <= Player.STAMINA_MAX - Player.ROLL_COST + 0.01, "la roulade consomme de l'endurance")
 	player.take_damage(15)
 	check(player.health == hp_before_roll, "invincible pendant la roulade (esquive)")
+	# Pendant la roulade, ni attaque ni spécial ne partent (les timers restent à 0).
+	player._try_attack()
+	check(player._attack_timer <= 0.0, "pas d'attaque pendant la roulade")
+	player._try_special()
+	check(player.special_timer <= 0.0, "pas de spécial pendant la roulade")
 	for i in 40:
 		await physics_frame
 	check(player._roll_timer <= 0.0, "la roulade se termine")
@@ -212,14 +472,17 @@ func _run() -> void:
 		if has_submerged != has_water_mesh:
 			mismatches += 1
 	check(mismatches == 0, "eau présente exactement sur les chunks immergés (%d avec eau)" % chunks_with_water)
+	check(world._water_mat.render_priority == 1,
+		"l'eau se dessine après les autres transparents (coque du slime immergé)")
 
-	# --- Nage ---
+	# --- Nage (dans l'océan trouvé plus haut) ---
 	# TerrainGen est en unités cube : conversions monde via Chunk.CUBE.
 	var water_world := TerrainGen.WATER_Y * Chunk.CUBE
-	var deepest_world := deepest * Chunk.CUBE
+	var deep_top := (float(gen.get_height(deep_pos.x, deep_pos.y)) + 0.5) * Chunk.CUBE
+	var deepest_world := water_world - deep_top
 	check(player.gen != null, "le joueur connaît le générateur (détection de l'eau)")
 	check(Player.SWIM_EXIT_DEPTH < Player.SWIM_ENTER_DEPTH, "hystérésis : sortie moins profonde que l'entrée")
-	check(deepest_world >= 1.3, "un lac assez profond existe pour nager (%.2f m en %s)" % [deepest_world, deep_pos])
+	check(deepest_world >= 1.3, "l'océan est assez profond pour nager (%.2f m en %s)" % [deepest_world, deep_pos])
 	if deepest_world >= 1.3 and player.gen != null:
 		var drop := minf(deepest_world - 0.1, 1.8) # sous la surface mais au-dessus du fond
 		player.global_position = Vector3(deep_pos.x * Chunk.CUBE, water_world - drop, deep_pos.y * Chunk.CUBE)
@@ -261,6 +524,111 @@ func _run() -> void:
 		world._on_player_died()
 		await physics_frame
 
+	# --- Auto-montée : marche d'un cube gravie sans Espace ---
+	var NONE := Vector2i(2147483647, 2147483647)
+	var step_col := NONE # marche d'un cube « propre » (voisins gravissables, approche plate)
+	var wall_col := NONE # mur LARGE de 2+ cubes (les 3 colonnes de front)
+	var slot_col := NONE # marche d'un cube COINCÉE entre deux murs (fente étroite)
+	# ±140 cubes : il faut atteindre les reliefs (montagnes) pour trouver un mur
+	# large — tout reste dans la zone de chunks chargés (render_distance 12 = ±192).
+	for dx in range(-140, 140):
+		for dz in range(-140, 140):
+			var x := spawn_col.x + dx
+			var z := spawn_col.y + dz
+			var h0 := gen.get_height(x, z)
+			if float(h0) + 0.5 < TerrainGen.WATER_Y + 1.0:
+				continue # on teste au sec
+			if gen.get_height(x - 1, z) != h0:
+				continue # approche plate : le joueur part de la colonne x-1
+			var dh := gen.get_height(x + 1, z) - h0
+			var dhl := gen.get_height(x + 1, z - 1) - h0
+			var dhr := gen.get_height(x + 1, z + 1) - h0
+			# La capsule (0.8 m) est plus large qu'un cube : les colonnes voisines
+			# de front comptent aussi (test_move les voit dans _auto_step).
+			if dh == 1 and dhl <= 1 and dhr <= 1 and step_col == NONE:
+				step_col = Vector2i(x, z)
+			elif dh == 1 and dhl >= 2 and dhr >= 2 and slot_col == NONE:
+				slot_col = Vector2i(x, z)
+			elif dh >= 2 and dhl >= 2 and dhr >= 2 and wall_col == NONE:
+				wall_col = Vector2i(x, z)
+		if step_col != NONE and wall_col != NONE and slot_col != NONE:
+			break
+	check(step_col != NONE, "une marche d'un cube existe près du spawn")
+	# L'auto-montée exige d'être au sol : on laisse le joueur atterrir au spawn.
+	for i in 180:
+		await physics_frame
+		if player.is_on_floor():
+			break
+	check(player.is_on_floor(), "le joueur est au sol avant le test d'auto-montée")
+	if step_col != NONE:
+		var climbed: bool = await drive_forward(player, step_col, gen)
+		check(climbed, "auto-montée par collision : le joueur finit debout sur la marche")
+	if wall_col != NONE:
+		var rose_wall: bool = await drive_expect_blocked(player, wall_col, gen)
+		check(not rose_wall, "pas d'auto-montée contre un mur de 2+ cubes")
+	if slot_col != NONE:
+		var rose_slot: bool = await drive_expect_blocked(player, slot_col, gen)
+		check(not rose_slot, "pas d'auto-montée vers une fente naturelle d'un cube")
+	# Fente synthétique GARANTIE (la config naturelle est rare sur du bruit
+	# lisse) : marche d'un cube coincée entre deux murs de 2, posée au sol.
+	var flat_col := NONE
+	for dx in range(-60, 60):
+		for dz in range(-60, 60):
+			var x := spawn_col.x + dx
+			var z := spawn_col.y + dz
+			var h0 := gen.get_height(x, z)
+			if float(h0) + 0.5 < TerrainGen.WATER_Y + 1.0:
+				continue
+			var flat := true
+			for ax in range(-1, 3):
+				for az in range(-2, 3):
+					if gen.get_height(x + ax, z + az) != h0 or gen.has_tree(x + ax, z + az):
+						flat = false
+			if flat:
+				flat_col = Vector2i(x, z)
+				break
+		if flat_col != NONE:
+			break
+	check(flat_col != NONE, "zone plate trouvée pour la fente synthétique")
+	if flat_col != NONE:
+		var flat_top := (float(gen.get_height(flat_col.x, flat_col.y)) + 0.5) * Chunk.CUBE
+		var slot_body := StaticBody3D.new()
+		world.add_child(slot_body)
+		for off: int in [-1, 0, 1]:
+			var scs := CollisionShape3D.new()
+			var sbx := BoxShape3D.new()
+			var hgt := Chunk.CUBE if off == 0 else Chunk.CUBE * 2.0
+			sbx.size = Vector3(Chunk.CUBE, hgt, Chunk.CUBE)
+			scs.shape = sbx
+			scs.position = Vector3((flat_col.x + 1) * Chunk.CUBE, flat_top + hgt * 0.5,
+				(flat_col.y + off) * Chunk.CUBE)
+			slot_body.add_child(scs)
+		await physics_frame
+		var rose_synth: bool = await drive_expect_blocked(player, flat_col, gen)
+		check(not rose_synth, "pas d'auto-montée vers une fente d'un cube (le corps n'y passe pas)")
+		slot_body.queue_free()
+
+	# --- Roulade dans l'eau : seulement si on a pied ---
+	# En plein océan, le joueur flotte (pas de contact au sol) : la roulade est
+	# refusée. (Avec pied — eau peu profonde — elle reste permise : is_on_floor.)
+	player.global_position = Vector3(deep_pos.x * Chunk.CUBE,
+		TerrainGen.WATER_Y * Chunk.CUBE - 1.3, deep_pos.y * Chunk.CUBE)
+	player.velocity = Vector3.ZERO
+	for i in 30:
+		await physics_frame
+		if player.swimming:
+			break
+	check(player.swimming, "le joueur nage en plein océan")
+	check(not player.is_on_floor(), "en flottaison, aucun contact au sol")
+	player.stamina = Player.STAMINA_MAX
+	Input.action_press("Roll")
+	for i in 3:
+		await physics_frame
+	Input.action_release("Roll")
+	check(player._roll_timer <= 0.0, "pas de roulade du joueur dans l'eau sans avoir pied")
+	world._on_player_died()
+	await physics_frame
+
 	# --- Ennemis : archétypes, corps, agilité ---
 	var slime := (load("res://Scènes/Acteurs/slime.tscn") as PackedScene).instantiate() as Enemy
 	world.add_child(slime)
@@ -286,6 +654,85 @@ func _run() -> void:
 		await physics_frame
 	scout.take_damage(10, player.global_position)
 	check(scout.health == scout_hp - 10, "l'éclaireur reprend des dégâts après sa roulade")
+
+	# Même règle que le joueur : dans l'eau, un ennemi ne roule que s'il a pied.
+	scout._stamina = Enemy.STAMINA_MAX
+	scout.global_position = Vector3(deep_pos.x * Chunk.CUBE,
+		TerrainGen.WATER_Y * Chunk.CUBE - 1.3, deep_pos.y * Chunk.CUBE)
+	scout.velocity = Vector3.ZERO
+	for i in 10:
+		await physics_frame
+	check(not scout.is_on_floor(), "éclaireur en flottaison, aucun contact au sol")
+	check(not scout._try_roll(Vector3(1, 0, 0)), "pas de roulade d'ennemi dans l'eau sans avoir pied")
+
+	# --- Arbre voxel généré par script (tools/gen_tree_scene.gd) ---
+	var tree = (load("res://Scènes/Monde/tree.tscn") as PackedScene).instantiate()
+	check(int(tree.get_meta("cube_count", 0)) > 500,
+		"arbre : nuage de cubes voxel (%d cubes)" % int(tree.get_meta("cube_count", 0)))
+	var tmesh: ArrayMesh = (tree.get_node("Blocks") as MeshInstance3D).mesh
+	var tarrays := tmesh.surface_get_arrays(0)
+	var tverts: PackedVector3Array = tarrays[Mesh.ARRAY_VERTEX]
+	var tcols: PackedColorArray = tarrays[Mesh.ARRAY_COLOR]
+	check(tverts.size() > 3000 and tcols.size() == tverts.size(),
+		"arbre : maillage voxel coloré (%d sommets)" % tverts.size())
+	# Chaque sommet est un COIN de cube : sur la demi-grille de CUBE. Cela
+	# vérifie à la fois la taille uniforme des cubes et l'alignement monde.
+	var misaligned := 0
+	for i in tverts.size():
+		var p := tverts[i] * (2.0 / Chunk.CUBE)
+		if absf(p.x - roundf(p.x)) > 0.02 or absf(p.y - roundf(p.y)) > 0.02 \
+				or absf(p.z - roundf(p.z)) > 0.02:
+			misaligned += 1
+	check(misaligned == 0, "arbre : cubes alignés sur la grille du monde (%d sommets hors grille)" % misaligned)
+	var taabb := tmesh.get_aabb()
+	check(taabb.size.x > 3.0 and taabb.size.y > 6.0 and taabb.size.x < 15.0 and taabb.size.y < 15.0,
+		"arbre : dimensions plausibles (%.1f × %.1f × %.1f m)" % [taabb.size.x, taabb.size.y, taabb.size.z])
+	var tbody := tree.get_node("Body") as StaticBody3D
+	var trunk_shapes := 0
+	var leaf_shapes := 0
+	for cs in tbody.get_children():
+		if String(cs.name).begins_with("Trunk"):
+			trunk_shapes += 1
+		elif String(cs.name).begins_with("Leaves"):
+			leaf_shapes += 1
+	check(trunk_shapes >= 2 and leaf_shapes >= 2,
+		"arbre : collision calculée (%d colonnes de tronc, %d boîtes de feuillage)" % [trunk_shapes, leaf_shapes])
+	check(tree.get_node_or_null("Model") == null, "arbre : plus de GLB embarqué (généré par script)")
+	tree.free()
+
+	# Les 5 variantes : mêmes garanties de base, silhouettes et cubes distincts.
+	var variant_heights := {}
+	var variant_cubes := {}
+	for tf in ["tree", "tree2", "tree3", "tree4", "tree5"]:
+		var tv = (load("res://Scènes/Monde/%s.tscn" % tf) as PackedScene).instantiate()
+		var cc := int(tv.get_meta("cube_count", 0))
+		variant_cubes[tf] = cc
+		var vb := tv.get_node_or_null("Body")
+		var vm: ArrayMesh = (tv.get_node("Blocks") as MeshInstance3D).mesh
+		variant_heights[tf] = vm.get_aabb().size.y
+		check(cc > 300 and vb != null and vb.get_child_count() > 5,
+			"variante %s : %d cubes, %d boîtes de collision" % [tf, cc, vb.get_child_count() if vb != null else 0])
+		tv.free()
+	check(variant_heights["tree3"] > variant_heights["tree"] \
+			and variant_heights["tree"] > variant_heights["tree2"],
+		"variantes : silhouettes distinctes (élancé %.1f > original %.1f > trapu %.1f m)"
+		% [variant_heights["tree3"], variant_heights["tree"], variant_heights["tree2"]])
+
+	# Les arbres plantés par les chunks ne sont plus mis à l'échelle (cubes
+	# uniformes, variété par rotation en quarts de tour) et mélangent les variantes.
+	var planted := 0
+	var scaled_trees := 0
+	var planted_variants := {}
+	for key in world.loaded_chunks:
+		for ch in world.loaded_chunks[key].get_children():
+			if ch is Node3D and ch.scene_file_path.begins_with("res://Scènes/Monde/tree"):
+				planted += 1
+				planted_variants[ch.scene_file_path] = true
+				if not (ch as Node3D).scale.is_equal_approx(Vector3.ONE):
+					scaled_trees += 1
+	check(scaled_trees == 0, "arbres plantés à l'échelle 1 (%d arbres chargés)" % planted)
+	check(planted_variants.size() >= 3,
+		"la forêt mélange les variantes (%d / 5 présentes sur %d arbres)" % [planted_variants.size(), planted])
 
 	print("")
 	if fails == 0:

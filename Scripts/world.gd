@@ -70,7 +70,7 @@ void fragment() {
 const ENEMY_DESPAWN_DIST := 50.0
 
 @export var render_distance: int = 6     # rayon de chunks chargés autour du joueur
-										 # (chunks de 8 m depuis les blocs fins)
+										 # (chunks de 9.6 m : 16 cubes de 0.6 m)
 @export var chunk_build_per_frame: int = 2
 @export var max_enemies: int = 6
 @export var enemy_spawn_interval: float = 4.0
@@ -97,6 +97,7 @@ var _underwater := false            # la caméra est-elle sous la surface ?
 var _underwater_rect: ColorRect     # teinte plein écran quand on est immergé
 var _menu: MainMenu                 # menu principal (null une fois en jeu)
 var _current_char := {}             # personnage en cours (sauvegardé via MainMenu)
+var _spawn_pos := Vector3.ZERO      # point d'apparition (terre ferme la plus proche de l'origine)
 
 func _ready() -> void:
 	chunk_size = Chunk.SIZE
@@ -134,8 +135,12 @@ func start_session(character: Dictionary, seed_value: int) -> void:
 	gen.setup(seed_value)
 	add_child(gen)
 	_make_day_night()
-	# On construit tout de suite le chunk de spawn : sinon le joueur tombe dans le vide.
-	_build_chunk(Vector2i(0, 0))
+	# Le biome océan peut couvrir l'origine : on apparaît sur la terre ferme
+	# la plus proche. Puis on construit tout de suite le chunk de spawn,
+	# sinon le joueur tombe dans le vide.
+	_spawn_pos = _find_spawn_pos()
+	var w := chunk_size * Chunk.CUBE
+	_build_chunk(Vector2i(floori(_spawn_pos.x / w), floori(_spawn_pos.z / w)))
 
 	# Une scène par classe (class_id préréglé dedans).
 	var id: String = character.get("class_id", "warrior")
@@ -143,7 +148,7 @@ func start_session(character: Dictionary, seed_value: int) -> void:
 	player = scene.instantiate() as Player
 	player.gen = gen # la nage sonde le terrain pour savoir où est l'eau
 	add_child(player)
-	player.global_position = Vector3(0.25, _ground_y(0.0, 0.0) + 3.0, 0.25)
+	player.global_position = _spawn_pos
 
 	# Restaure la progression sauvegardée (niveau, XP, équipement, sac).
 	player.level = int(character.get("level", 1))
@@ -229,6 +234,25 @@ func _process(delta: float) -> void:
 # TerrainGen travaille en indices de cube : conversion via Chunk.CUBE.
 func _ground_y(wx: float, wz: float) -> float:
 	return (float(gen.get_height(roundi(wx / Chunk.CUBE), roundi(wz / Chunk.CUBE))) + 0.5) * Chunk.CUBE
+
+# Colonne émergée (hors plage) la plus proche de l'origine, en spirale par
+# anneaux de 8 cubes. Déterministe : même seed => même point d'apparition.
+func _find_spawn_pos() -> Vector3:
+	for ring in 256:
+		var d := ring * 8
+		var pts: Array[Vector2i] = []
+		if ring == 0:
+			pts.append(Vector2i(0, 0))
+		for i in range(-ring, ring + 1):
+			if ring > 0:
+				pts.append_array([Vector2i(i * 8, -d), Vector2i(i * 8, d),
+					Vector2i(-d, i * 8), Vector2i(d, i * 8)])
+		for p in pts:
+			if float(gen.get_height(p.x, p.y)) + 0.5 >= TerrainGen.WATER_Y + 1.0:
+				return Vector3(p.x * Chunk.CUBE + 0.25,
+					(float(gen.get_height(p.x, p.y)) + 0.5) * Chunk.CUBE + 3.0,
+					p.y * Chunk.CUBE + 0.25)
+	return Vector3(0.25, _ground_y(0.0, 0.0) + 3.0, 0.25) # improbable : tout est océan
 
 func _player_chunk() -> Vector2i:
 	var w := chunk_size * Chunk.CUBE # emprise monde d'un chunk
@@ -340,6 +364,10 @@ func _make_water_material() -> void:
 	sh.code = WATER_SHADER
 	_water_mat = ShaderMaterial.new()
 	_water_mat.shader = sh
+	# L'eau se dessine EN DERNIER parmi les objets transparents : sinon, selon
+	# l'angle de vue, la surface (depth_draw_always) passe avant la coque
+	# gélatineuse du slime immergé et la découpe (coque invisible sous l'eau).
+	_water_mat.render_priority = 1
 
 # Le cycle jour/nuit pilote la lumière et l'environnement déjà posés dans world.tscn.
 func _make_day_night() -> void:
@@ -397,5 +425,5 @@ func _on_player_leveled_up(_lvl: int) -> void:
 		t.tween_property(_level_label, "scale", Vector2.ONE, 0.3)
 
 func _on_player_died() -> void:
-	player.global_position = Vector3(0.25, _ground_y(0.0, 0.0) + 3.0, 0.25)
+	player.global_position = _spawn_pos
 	player.velocity = Vector3.ZERO
