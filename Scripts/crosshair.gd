@@ -1,15 +1,12 @@
 extends Control
 
+# Réticule assorti au monde cubique : un petit carré creux et son « pixel »
+# central, cernés de sombre pour rester lisibles sur ciel comme sur neige.
+
 func _draw() -> void:
-	#Cercle
-	draw_circle(Vector2.ZERO, 4, Color.DIM_GRAY)
-	draw_circle(Vector2.ZERO, 3, Color.WHITE)
-	
-	#Ligne droite
-	draw_line(Vector2(16,0), Vector2(24,0), Color.WHITE, 2)
-	#Ligne gauche
-	draw_line(Vector2(-16,0), Vector2(-24,0), Color.WHITE, 2)
-	#Ligne du haut
-	draw_line(Vector2(0,-16), Vector2(0,-24), Color.WHITE, 2)
-	#Ligne du bas
-	draw_line(Vector2(0,16), Vector2(0,24), Color.WHITE, 2)
+	# Carré creux : liseré sombre dessous, trait blanc par-dessus.
+	draw_rect(Rect2(-6, -6, 12, 12), Color(0.1, 0.1, 0.1, 0.6), false, 4.0)
+	draw_rect(Rect2(-6, -6, 12, 12), Color.WHITE, false, 2.0)
+	# Pixel central.
+	draw_rect(Rect2(-2, -2, 4, 4), Color(0.1, 0.1, 0.1, 0.6))
+	draw_rect(Rect2(-1, -1, 2, 2), Color.WHITE)

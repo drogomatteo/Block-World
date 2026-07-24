@@ -11,6 +11,7 @@ config_version=5
 [application]
 
 config/name="Block World"
+config/version="0.1.0"
 run/main_scene="uid://dkunb6ch24p5u"
 config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.svg"

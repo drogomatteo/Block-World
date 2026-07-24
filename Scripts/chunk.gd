@@ -15,9 +15,6 @@ const CUBE := 0.6
 var gen: TerrainGen
 var cx: int
 var cz: int
-# Les 5 variantes d'arbre voxel (générées par tools/gen_tree_scene.gd),
-# préréglées dans Scènes/Monde/chunk.tscn.
-@export var tree_scenes: Array[PackedScene] = []
 var water_material: Material # partagé, créé une seule fois par world.gd
 var deco_view_dist := 0.0    # distance d'affichage des décos (0 = illimitée)
 var deco_visible := true     # option « décorations au sol »
@@ -104,8 +101,6 @@ func _build_collision() -> void:
 	add_child(body)
 
 func _build_trees() -> void:
-	if tree_scenes.is_empty():
-		return
 	var shadow_pos: Array[Vector3] = []
 	for lx in SIZE:
 		for lz in SIZE:
@@ -113,17 +108,19 @@ func _build_trees() -> void:
 			var wz := cz * SIZE + lz
 			if gen.has_tree(wx, wz):
 				var h := gen.get_height(wx, wz)
-				# Variante tirée au sort (déterministe) : forêt dépareillée.
-				var variant := int(gen.rand01(wx, wz, 24) * tree_scenes.size()) % tree_scenes.size()
-				var t := tree_scenes[variant].instantiate()
+				# Arbre 100 % procédural (TreeGen) : construit cube par cube avec
+				# une graine dérivée du seed et de la position — chaque arbre du
+				# monde est unique, mais le même monde redonne les mêmes arbres.
+				# Ses cubes font CUBE et tombent pile sur la grille du monde ; le
+				# callable donne à TreeGen le relief autour du pied (racines qui
+				# descendent en aval, cubes enterrés retirés en amont : jamais un
+				# cube d'arbre sur un cube de terrain).
+				var t := TreeGen.build(gen.world_seed, wx, wz,
+					gen.get_biome(wx, wz) == TerrainGen.Biome.SNOW,
+					func(dx: int, dz: int) -> int:
+						return gen.get_height(wx + dx, wz + dz) - h)
 				add_child(t)
-				# Position à l'échelle cube : les cubes de l'arbre (générés par
-				# tools/gen_tree_scene.gd à la taille CUBE) tombent pile sur la
-				# grille du monde. Plus de mise à l'échelle aléatoire — elle
-				# casserait l'uniformité des cubes ; la variation vient d'une
-				# rotation par quarts de tour (déterministe), qui préserve la grille.
 				t.position = Vector3(lx * CUBE, (float(h) + 0.5) * CUBE, lz * CUBE)
-				t.rotation.y = float(int(gen.rand01(wx, wz, 13) * 4.0)) * (PI * 0.5)
 				shadow_pos.append(t.position + Vector3(0, 0.04, 0))
 	if shadow_pos.is_empty():
 		return
@@ -132,8 +129,7 @@ func _build_trees() -> void:
 	# cumuleraient avec l'ombre portée du soleil).
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
-	# Rayon 4 m : les troncs font ~4 m de LARGE depuis l'agrandissement des
-	# arbres — plus petit, le disque disparaît entièrement sous le tronc.
+	# Rayon 4 m : de l'ordre du rayon des canopées procédurales (~3-4.5 m).
 	mm.mesh = FX.blob_shadow_mesh(4.0)
 	mm.instance_count = shadow_pos.size()
 	for i in shadow_pos.size():

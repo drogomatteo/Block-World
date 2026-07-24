@@ -76,7 +76,7 @@ func _run() -> void:
 		check(ei != null and ei.type_id == tid, "scène d'ennemi %s (type_id préréglé)" % tid)
 		if ei != null:
 			ei.free()
-	for sp in ["Monde/terrain_gen", "Monde/chunk", "Monde/day_night", "Monde/tree",
+	for sp in ["Monde/terrain_gen", "Monde/chunk", "Monde/day_night",
 			"UI/ui", "UI/main_menu", "UI/options_menu", "UI/inventory_ui",
 			"Objets/pickup", "Objets/projectile", "Objets/items"]:
 		check(load("res://Scènes/%s.tscn" % sp) != null, "la scène %s.tscn se charge" % sp)
@@ -118,6 +118,9 @@ func _run() -> void:
 	# Les widgets viennent des scènes UI (plus construits en code).
 	check(world._menu.find_child("PlayBtn") != null, "bouton Jouer dans la scène du menu")
 	check(world._menu.find_child("SeedEdit") != null, "champ Graine dans la scène du menu")
+	var vlabel: Label = world._menu.find_child("VersionLabel", true, false)
+	check(vlabel != null and vlabel.text == "v" + str(ProjectSettings.get_setting("application/config/version")),
+		"la version du jeu est affichée au menu (%s)" % (vlabel.text if vlabel != null else "absente"))
 	check(world._options.find_child("VolumeSlider") != null, "curseur Volume dans la scène des options")
 	check(world._options.find_child("ResBtn") != null, "liste des résolutions dans la scène des options")
 	var test_ch: Dictionary = MainMenu.create_character("__smoke__", "warrior")
@@ -630,16 +633,34 @@ func _run() -> void:
 	zout.pressed = true
 	player._unhandled_input(zout)
 	check(absf(player._spring.spring_length - zl0) < 0.01, "dézoom molette : la caméra s'éloigne")
-	var lod_tree = (load("res://Scènes/Monde/tree.tscn") as PackedScene).instantiate()
+	var lod_tree := TreeGen.build(12345, 40, 40)
 	var lod_blocks: MeshInstance3D = lod_tree.get_node("Blocks")
-	var lod_mesh: MeshInstance3D = lod_tree.get_node_or_null("BlocksLOD")
-	check(lod_mesh != null and lod_blocks.visibility_range_end > 0.0 \
-			and absf(lod_mesh.visibility_range_begin - lod_blocks.visibility_range_end) < 0.01,
-		"arbre : LOD à distance fixe (bascule à %.0f m)" % lod_blocks.visibility_range_end)
-	if lod_mesh != null:
+	var lod1: MeshInstance3D = lod_tree.get_node_or_null("BlocksLOD1")
+	var lod2: MeshInstance3D = lod_tree.get_node_or_null("BlocksLOD2")
+	check(lod1 != null and lod2 != null \
+			and lod_blocks.visibility_range_end >= 100.0 \
+			and absf(lod1.visibility_range_begin - lod_blocks.visibility_range_end) < 0.01 \
+			and absf(lod2.visibility_range_begin - lod1.visibility_range_end) < 0.01,
+		"arbre : LOD en 2 paliers enchaînés (transition à %.0f m, grossier à %.0f m)"
+		% [lod_blocks.visibility_range_end, lod1.visibility_range_end if lod1 != null else -1.0])
+	if lod1 != null and lod2 != null:
+		# Pas de fondu : la transparence du fondu coupait l'ombre portée (lumière
+		# au travers de l'arbre pendant la transition). Bascule nette + hystérésis.
+		check(lod_blocks.visibility_range_fade_mode == GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED \
+				and lod1.visibility_range_fade_mode == GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED \
+				and lod_blocks.visibility_range_end_margin > 0.0 and lod1.visibility_range_begin_margin > 0.0,
+			"arbre : bascules de LOD nettes avec hystérésis (aucun fondu transparent)")
+		# Le palier de transition garde son ombre (portée des ombres : 180 m) ;
+		# le palier lointain vit au-delà, son ombre serait invisible.
+		check(lod1.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_ON \
+				and lod1.visibility_range_end > 180.0 \
+				and lod2.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
+			"arbre : ombre portée conservée jusqu'au-delà de la portée des ombres du soleil")
 		var full_v: int = (lod_blocks.mesh as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()
-		var lod_v: int = (lod_mesh.mesh as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()
-		check(lod_v * 3 < full_v, "LOD nettement plus léger (%d sommets vs %d)" % [lod_v, full_v])
+		var lod1_v: int = (lod1.mesh as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()
+		var lod2_v: int = (lod2.mesh as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()
+		check(lod1_v < full_v and lod2_v * 3 < full_v and lod2_v < lod1_v,
+			"LOD de plus en plus légers (%d > %d > %d sommets)" % [full_v, lod1_v, lod2_v])
 	lod_tree.free()
 
 	# --- Nage (dans l'océan trouvé plus haut) ---
@@ -915,15 +936,15 @@ func _run() -> void:
 			"ennemi retenu par le sol analytique (y %.2f ≥ terrain %.2f, aucun collider)"
 			% [scout.global_position.y, cur_gy])
 
-	# --- Arbre voxel généré par script (tools/gen_tree_scene.gd) ---
-	var tree = (load("res://Scènes/Monde/tree.tscn") as PackedScene).instantiate()
-	check(int(tree.get_meta("cube_count", 0)) > 500,
-		"arbre : nuage de cubes voxel (%d cubes)" % int(tree.get_meta("cube_count", 0)))
+	# --- Arbres 100 % procéduraux (Scripts/tree_gen.gd) ---
+	var tree := TreeGen.build(12345, 100, 100)
+	var tree_cubes := int(tree.get_meta("cube_count", 0))
+	check(tree_cubes > 100, "arbre : nuage de cubes voxel (%d cubes)" % tree_cubes)
 	var tmesh: ArrayMesh = (tree.get_node("Blocks") as MeshInstance3D).mesh
 	var tarrays := tmesh.surface_get_arrays(0)
 	var tverts: PackedVector3Array = tarrays[Mesh.ARRAY_VERTEX]
 	var tcols: PackedColorArray = tarrays[Mesh.ARRAY_COLOR]
-	check(tverts.size() > 3000 and tcols.size() == tverts.size(),
+	check(tverts.size() > 800 and tcols.size() == tverts.size(),
 		"arbre : maillage voxel coloré (%d sommets)" % tverts.size())
 	# Chaque sommet est un COIN de cube : sur la demi-grille de CUBE. Cela
 	# vérifie à la fois la taille uniforme des cubes et l'alignement monde.
@@ -935,8 +956,13 @@ func _run() -> void:
 			misaligned += 1
 	check(misaligned == 0, "arbre : cubes alignés sur la grille du monde (%d sommets hors grille)" % misaligned)
 	var taabb := tmesh.get_aabb()
-	check(taabb.size.x > 4.0 and taabb.size.y > 8.0 and taabb.size.x < 20.0 and taabb.size.y < 20.0,
+	check(taabb.size.x > 3.0 and taabb.size.y > 4.0 and taabb.size.x < 20.0 and taabb.size.y < 20.0,
 		"arbre : dimensions plausibles (%.1f × %.1f × %.1f m)" % [taabb.size.x, taabb.size.y, taabb.size.z])
+	# Sur sol plat (pas de callable terrain), AUCUN cube sous le point de
+	# plantation : un cube d'arbre ne partage jamais la case d'un cube de sol
+	# (l'ancienne couche enterrée z-fightait avec le bloc de surface).
+	check(taabb.position.y >= -0.01,
+		"arbre : aucun cube sous le point de plantation (fini le z-fight tronc/sol)")
 	var tbody := tree.get_node("Body") as StaticBody3D
 	var trunk_shapes := 0
 	var leaf_shapes := 0
@@ -947,42 +973,81 @@ func _run() -> void:
 			leaf_shapes += 1
 	check(trunk_shapes >= 2 and leaf_shapes >= 2,
 		"arbre : collision calculée (%d colonnes de tronc, %d boîtes de feuillage)" % [trunk_shapes, leaf_shapes])
-	check(tree.get_node_or_null("Model") == null, "arbre : plus de GLB embarqué (généré par script)")
+	check(tree.scene_file_path.is_empty(), "arbre : construit en code, plus aucune scène")
 	tree.free()
 
-	# Les 5 variantes : mêmes garanties de base, silhouettes et cubes distincts.
-	var variant_heights := {}
-	var variant_cubes := {}
-	for tf in ["tree", "tree2", "tree3", "tree4", "tree5"]:
-		var tv = (load("res://Scènes/Monde/%s.tscn" % tf) as PackedScene).instantiate()
-		var cc := int(tv.get_meta("cube_count", 0))
-		variant_cubes[tf] = cc
-		var vb := tv.get_node_or_null("Body")
-		var vm: ArrayMesh = (tv.get_node("Blocks") as MeshInstance3D).mesh
-		variant_heights[tf] = vm.get_aabb().size.y
-		check(cc > 300 and vb != null and vb.get_child_count() > 5,
-			"variante %s : %d cubes, %d boîtes de collision" % [tf, cc, vb.get_child_count() if vb != null else 0])
-		tv.free()
-	check(variant_heights["tree3"] > variant_heights["tree"] \
-			and variant_heights["tree"] > variant_heights["tree2"],
-		"variantes : silhouettes distinctes (élancé %.1f > original %.1f > trapu %.1f m)"
-		% [variant_heights["tree3"], variant_heights["tree"], variant_heights["tree2"]])
+	# Ancrage au relief : côté aval (terrain 2 cubes plus bas) les racines
+	# DESCENDENT combler la pente ; côté amont (terrain plus haut) les cubes
+	# qui seraient dans la butte sont retirés.
+	var slope_tree := TreeGen.build(12345, 100, 100, false,
+		func(dx: int, _dz: int) -> int: return -2 if dx > 0 else 0)
+	var sm: ArrayMesh = (slope_tree.get_node("Blocks") as MeshInstance3D).mesh
+	check(sm.get_aabb().position.y < -0.5,
+		"arbre en pente : les racines descendent jusqu'au sol aval (%.2f m)" % sm.get_aabb().position.y)
+	slope_tree.free()
 
-	# Les arbres plantés par les chunks ne sont plus mis à l'échelle (cubes
-	# uniformes, variété par rotation en quarts de tour) et mélangent les variantes.
+	# Unicité : d'autres positions donnent d'autres silhouettes...
+	var tree_sigs := {}
+	var sig_uniq := {}
+	var h_min := 999.0
+	var h_max := 0.0
+	for tp: Vector2i in [Vector2i(100, 100), Vector2i(-3000, 250), Vector2i(777, -4444),
+			Vector2i(52, 9001), Vector2i(-64, -64), Vector2i(2048, 512),
+			Vector2i(-900, 7777), Vector2i(31337, -2)]:
+		var tv := TreeGen.build(12345, tp.x, tp.y)
+		var tvm: ArrayMesh = (tv.get_node("Blocks") as MeshInstance3D).mesh
+		var sig := "%d|%.2f|%.2f" % [int(tv.get_meta("cube_count", 0)),
+			tvm.get_aabb().size.y, tvm.get_aabb().size.x]
+		tree_sigs[tp] = sig
+		sig_uniq[sig] = true
+		h_min = minf(h_min, tvm.get_aabb().size.y)
+		h_max = maxf(h_max, tvm.get_aabb().size.y)
+		tv.free()
+	check(sig_uniq.size() >= 6,
+		"arbres uniques : 8 positions, %d silhouettes distinctes" % sig_uniq.size())
+	# Gabarits variés : des petits arbres côtoient des géants massifs.
+	check(h_max - h_min > 3.0,
+		"tailles d'arbres variées (de %.1f à %.1f m de haut)" % [h_min, h_max])
+	# ... mais la même position redonne EXACTEMENT le même arbre (déterminisme
+	# par seed : indispensable pour le multijoueur par partage de graine).
+	var tree_again := TreeGen.build(12345, 100, 100)
+	var tam: ArrayMesh = (tree_again.get_node("Blocks") as MeshInstance3D).mesh
+	var again_sig := "%d|%.2f|%.2f" % [int(tree_again.get_meta("cube_count", 0)),
+		tam.get_aabb().size.y, tam.get_aabb().size.x]
+	check(again_sig == tree_sigs[Vector2i(100, 100)],
+		"arbre déterministe : même graine + même position => même arbre")
+	tree_again.free()
+	# Biome neige : le feuillage à ciel ouvert est saupoudré de blanc.
+	var snowy_tree := TreeGen.build(12345, 100, 100, true)
+	var scols: PackedColorArray = ((snowy_tree.get_node("Blocks") as MeshInstance3D).mesh
+		as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_COLOR]
+	var white_verts := 0
+	for c: Color in scols:
+		if c.r > 0.6 and c.g > 0.6 and c.b > 0.6:
+			white_verts += 1
+	check(white_verts > 0, "biome neige : feuillage enneigé (%d sommets blanchis)" % white_verts)
+	snowy_tree.free()
+
+	# Les arbres plantés par les chunks sont générés en code (aucune scène),
+	# posés à l'échelle 1, et presque tous différents les uns des autres.
 	var planted := 0
 	var scaled_trees := 0
-	var planted_variants := {}
+	var from_scene := 0
+	var planted_cubes := {}
 	for key in world.loaded_chunks:
 		for ch in world.loaded_chunks[key].get_children():
-			if ch is Node3D and ch.scene_file_path.begins_with("res://Scènes/Monde/tree"):
+			if ch is Node3D and ch.has_meta("cube_count"):
 				planted += 1
-				planted_variants[ch.scene_file_path] = true
+				planted_cubes[int(ch.get_meta("cube_count"))] = true
+				if not ch.scene_file_path.is_empty():
+					from_scene += 1
 				if not (ch as Node3D).scale.is_equal_approx(Vector3.ONE):
 					scaled_trees += 1
+	check(planted >= 3, "des arbres sont plantés dans la zone chargée (%d)" % planted)
+	check(from_scene == 0, "arbres plantés construits en code (%d issus d'une scène)" % from_scene)
 	check(scaled_trees == 0, "arbres plantés à l'échelle 1 (%d arbres chargés)" % planted)
-	check(planted_variants.size() >= 3,
-		"la forêt mélange les variantes (%d / 5 présentes sur %d arbres)" % [planted_variants.size(), planted])
+	check(planted_cubes.size() >= maxi(2, planted / 2),
+		"forêt d'arbres uniques (%d tailles distinctes sur %d arbres)" % [planted_cubes.size(), planted])
 
 	print("")
 	if fails == 0:

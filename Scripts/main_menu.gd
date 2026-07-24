@@ -102,6 +102,11 @@ func _ready() -> void:
 	_world_name_edit = %WorldNameEdit
 	_seed_edit = %SeedEdit
 
+	# Version du jeu : source unique dans project.godot (application/config/version),
+	# mise à jour à chaque nouvelle version taguée dans git.
+	($Bg/VersionLabel as Label).text = "v%s" % ProjectSettings.get_setting(
+		"application/config/version", "?")
+
 	# Cartes de classes : couleurs/stats depuis Player.CLASSES, textes
 	# descriptifs depuis ClassSelect.CARDS — données de jeu, donc remplies ici
 	# plutôt que dupliquées dans la scène.

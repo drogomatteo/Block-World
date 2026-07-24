@@ -1,12 +1,6 @@
-[gd_scene load_steps=7 format=3 uid="uid://g7xissw93xrd"]
+[gd_scene load_steps=2 format=3 uid="uid://g7xissw93xrd"]
 
 [ext_resource type="Script" uid="uid://xkc3r7owe5c6" path="res://Scripts/chunk.gd" id="1"]
-[ext_resource type="PackedScene" uid="uid://7khjbuhpus3q" path="res://Scènes/Monde/tree.tscn" id="2"]
-[ext_resource type="PackedScene" uid="uid://btree2voxel2" path="res://Scènes/Monde/tree2.tscn" id="3"]
-[ext_resource type="PackedScene" uid="uid://btree3voxel3" path="res://Scènes/Monde/tree3.tscn" id="4"]
-[ext_resource type="PackedScene" uid="uid://btree4voxel4" path="res://Scènes/Monde/tree4.tscn" id="5"]
-[ext_resource type="PackedScene" uid="uid://btree5voxel5" path="res://Scènes/Monde/tree5.tscn" id="6"]
 
 [node name="Chunk" type="Node3D"]
 script = ExtResource("1")
-tree_scenes = [ExtResource("2"), ExtResource("3"), ExtResource("4"), ExtResource("5"), ExtResource("6")]
