@@ -30,11 +30,14 @@ var settings := {
 	"upscale_mode": 0,     # 0 bilinéaire, 1 FSR 1.0, 2 FSR 2.2
 	"msaa": 0,             # 0 off, 1 = 2x, 2 = 4x
 	"shadows": 1,          # index dans SHADOW_SIZES
+	"shadows_enabled": true,  # ombres réelles du soleil (off = ombres rondes)
 	"vsync": true,
 	"fps_index": 0,        # index dans FPS_OPTIONS
 	"mouse_sens": 0.005,
 	"volume": 1.0,
-	"render_distance": 6,
+	"render_distance": 30,
+	"render_dist_x3": false, # migration du 2026-07-24 (distance triplée), une fois
+	"decorations": true,   # herbe, fleurs, cailloux... posés sur le sol
 }
 
 var is_open := false
@@ -62,6 +65,14 @@ func _load_settings() -> void:
 		return
 	for key in settings.keys():
 		settings[key] = cf.get_value("settings", key, settings[key])
+	# Migration (2026-07-24) : distance d'affichage TRIPLÉE. La valeur vit dans
+	# le settings.cfg de l'utilisateur : sans ce relèvement unique, changer le
+	# défaut ne toucherait jamais une config existante. Il reste libre de la
+	# rebaisser ensuite (le drapeau empêche de la relever à chaque lancement).
+	if not bool(settings["render_dist_x3"]):
+		settings["render_distance"] = maxi(int(settings["render_distance"]), 30)
+		settings["render_dist_x3"] = true
+		_save_settings()
 
 func _save_settings() -> void:
 	var cf := ConfigFile.new()
@@ -120,6 +131,9 @@ func _apply_shadows() -> void:
 	var s: int = SHADOW_SIZES[settings.shadows]
 	RenderingServer.directional_shadow_atlas_set_size(s, true)
 	get_tree().root.positional_shadow_atlas_size = s
+	# Ombres réelles on/off ; le monde bascule aussi les ombres rondes des arbres.
+	if world != null and world.has_method("set_shadows_enabled"):
+		world.set_shadows_enabled(bool(settings.shadows_enabled))
 
 func _apply_vsync() -> void:
 	DisplayServer.window_set_vsync_mode(
@@ -135,6 +149,8 @@ func _apply_game() -> void:
 	AudioServer.set_bus_volume_db(master, linear_to_db(maxf(settings.volume, 0.0001)))
 	if world != null and world.has_method("set_render_distance"):
 		world.set_render_distance(int(settings.render_distance))
+	if world != null and world.has_method("set_decorations"):
+		world.set_decorations(bool(settings.decorations))
 
 # ---------- Branchement de l'interface (la structure est dans la scène) ----------
 
@@ -157,6 +173,8 @@ func _build() -> void:
 	%UpscaleBtn.selected = clampi(int(settings.upscale_mode), 0, 2)
 	%MsaaBtn.selected = clampi(int(settings.msaa), 0, 2)
 	%ShadowsBtn.selected = clampi(int(settings.shadows), 0, SHADOW_SIZES.size() - 1)
+	%ShadowsOnCheck.button_pressed = settings.shadows_enabled
+	%DecoCheck.button_pressed = settings.decorations
 	%VsyncCheck.button_pressed = settings.vsync
 	%FpsBtn.selected = clampi(int(settings.fps_index), 0, FPS_OPTIONS.size() - 1)
 	%RenderDistSlider.value = float(settings.render_distance)
@@ -240,6 +258,14 @@ func _on_vsync_check_toggled(v: bool) -> void:
 
 func _on_shadows_btn_item_selected(i: int) -> void:
 	_update_setting("shadows", i, _apply_shadows)
+
+
+func _on_shadows_on_check_toggled(v: bool) -> void:
+	_update_setting("shadows_enabled", v, _apply_shadows)
+
+
+func _on_deco_check_toggled(v: bool) -> void:
+	_update_setting("decorations", v, _apply_game)
 
 
 func _on_msaa_btn_item_selected(i: int) -> void:

@@ -21,11 +21,21 @@ extends SceneTree
 # ⚠ Relancer ce script ÉCRASE les 5 scènes (y compris des retouches éditeur).
 # Le GLB n'est plus référencé par les scènes : il ne sert qu'ici.
 
-# Mise à l'échelle du GLB identique à l'ancienne scène (Model scale 1.8,
-# décalage -0.6 : le pied du tronc s'ancre sous la surface pour les pentes).
-const SCALE := 1.8
+# Mise à l'échelle du GLB (décalage -0.6 : le pied du tronc s'ancre sous la
+# surface pour les pentes). 2.3 depuis l'agrandissement du monde du 2026-07-24
+# (arbres ~28 % plus grands, à l'échelle des nouveaux reliefs).
+const SCALE := 2.3
 const OFFSET := Vector3(0.0, -0.6, 0.0)
 const OUT_DIR := "res://Scènes/Monde/"
+
+# LOD : au-delà de LOD_DIST mètres de la CAMÉRA (distance fixe, indépendante
+# de la distance d'affichage), l'arbre bascule sur un maillage regroupé en
+# cellules de LOD_FACTOR³ cubes (~9× moins de faces, silhouette intacte).
+# Godot gère la bascule tout seul via visibility_range_begin/end ; le FONDU
+# (marge + fade SELF) évite le pop sec — à 80 m la différence reste discrète.
+const LOD_DIST := 80.0
+const LOD_MARGIN := 8.0
+const LOD_FACTOR := 3
 
 # chunk.tscn référence les arbres par ces uid : ils doivent survivre à la
 # régénération (ResourceSaver n'écrit pas d'uid en headless, on les réinjecte).
@@ -87,7 +97,16 @@ func _save_variant(file: String, uid: String) -> bool:
 	var tree := Node3D.new()
 	tree.name = "Tree"
 	tree.set_meta("cube_count", _voxels.size()) # lu par le smoke test
-	tree.add_child(_build_blocks())
+	var blocks := _build_blocks()
+	blocks.visibility_range_end = LOD_DIST
+	blocks.visibility_range_end_margin = LOD_MARGIN
+	blocks.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	tree.add_child(blocks)
+	var lod := _build_blocks_lod()
+	lod.visibility_range_begin = LOD_DIST
+	lod.visibility_range_begin_margin = LOD_MARGIN
+	lod.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	tree.add_child(lod)
 	tree.add_child(_build_body())
 	_set_owner_rec(tree, tree)
 	var path := OUT_DIR + file
@@ -210,6 +229,59 @@ func _emit_face(st: SurfaceTool, key: Vector3i, d: Vector3i) -> void:
 	var v := Vector3(0, 0, 1) if d.z == 0 else Vector3(0, 1, 0)
 	var fc := _voxel_center(key) + n * half
 	st.set_color(_voxels[key]["color"])
+	st.set_normal(n)
+	var quad: Array[Vector3] = [fc - u * half - v * half, fc + u * half - v * half,
+		fc + u * half + v * half, fc - u * half + v * half]
+	for t: int in [0, 1, 2, 0, 2, 3]:
+		st.add_vertex(quad[t])
+
+# Maillage LOD : les voxels regroupés en cellules de LOD_FACTOR³ (couleur
+# moyenne), faces exposées seulement. Pas d'ombre portée (trop loin pour
+# qu'elle se voie, et c'est autant de rendu économisé).
+func _build_blocks_lod() -> MeshInstance3D:
+	var cells := {}
+	for key: Vector3i in _voxels:
+		var ck := Vector3i(floori(float(key.x) / LOD_FACTOR),
+			floori(float(key.y) / LOD_FACTOR), floori(float(key.z) / LOD_FACTOR))
+		if not cells.has(ck):
+			cells[ck] = []
+		cells[ck].append(_voxels[key]["color"])
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	st.set_material(mat)
+	for ck: Vector3i in cells:
+		var avg := Color(0, 0, 0)
+		for c: Color in cells[ck]:
+			avg += c
+		avg /= float((cells[ck] as Array).size())
+		for d: Vector3i in [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0),
+				Vector3i(0, -1, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]:
+			if not cells.has(ck + d):
+				_emit_lod_face(st, ck, d, avg)
+	var mi := MeshInstance3D.new()
+	mi.name = "BlocksLOD"
+	mi.mesh = st.commit()
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
+
+# Centre monde d'une cellule LOD : la cellule couvre les voxels
+# [ck*F .. ck*F+F-1] sur chaque axe (mêmes conventions que _voxel_center).
+func _lod_center(ck: Vector3i) -> Vector3:
+	var f := float(LOD_FACTOR)
+	return Vector3(float(ck.x) * f + (f - 1.0) * 0.5,
+		float(ck.y) * f + f * 0.5,
+		float(ck.z) * f + (f - 1.0) * 0.5) * Chunk.CUBE
+
+func _emit_lod_face(st: SurfaceTool, ck: Vector3i, d: Vector3i, col: Color) -> void:
+	var half := Chunk.CUBE * float(LOD_FACTOR) * 0.5
+	var n := Vector3(d)
+	var u := Vector3(0, 1, 0) if d.x != 0 else Vector3(1, 0, 0)
+	var v := Vector3(0, 0, 1) if d.z == 0 else Vector3(0, 1, 0)
+	var fc := _lod_center(ck) + n * half
+	st.set_color(col)
 	st.set_normal(n)
 	var quad: Array[Vector3] = [fc - u * half - v * half, fc + u * half - v * half,
 		fc + u * half + v * half, fc - u * half + v * half]

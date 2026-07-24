@@ -139,6 +139,21 @@ func _run() -> void:
 	world.start_session({"name": "Testeur", "class_id": "warrior"}, 12345)
 	await process_frame
 	check(world._menu == null, "le menu est fermé une fois la session lancée")
+	# Déterminisme : plus AUCUN spawn d'ennemi par le monde pendant les tests
+	# (un archer qui touche le joueur fausse les comptes de PV) — les tests
+	# d'ennemis instancient les leurs à la main. Le tick de spawn est AUSSI
+	# neutralisé : il recycle les ennemis à plus de 50 m du joueur, et nos
+	# ennemis de test téléportés en plein océan se faisaient libérer en pleine
+	# vérification (crash « previously freed instance »).
+	world.max_enemies = 0
+	world.enemy_spawn_interval = 1e9
+	world._enemy_timer = 1e9
+	for e in world.get_tree().get_nodes_in_group("enemies"):
+		e.queue_free()
+	# Distance de rendu réduite pour le test : la valeur de jeu (30 chunks =
+	# 3721 chunks chargés) prendrait de longues minutes en headless. Toutes les
+	# vérifications (comptes de chunks, brume) sont relatives à cette valeur.
+	world.set_render_distance(6)
 
 	# --- Génération : cubes, océan, seuil de l'eau ---
 	var gen: TerrainGen = world.gen
@@ -251,6 +266,43 @@ func _run() -> void:
 		"aucune plage fantôme loin de l'eau (%d colonne(s) basse(s) sèche(s), 0 en sable)" % low_dry)
 	check(shore_sand, "le sable borde toujours l'eau réelle")
 
+	# --- Teinte de l'herbe : le vert dérive par patches (tint_noise) ---
+	# Mesuré PAR biome : plaine et forêt ont des verts de base différents, on ne
+	# veut compter que la dérive du bruit à l'intérieur d'un même biome.
+	var tint_min := {}
+	var tint_max := {}
+	var tint_n := {}
+	for dx in range(-200, 201, 4):
+		for dz in range(-200, 201, 4):
+			var x := spawn_col.x + dx
+			var z := spawn_col.y + dz
+			var b := gen.get_biome(x, z)
+			if b != TerrainGen.Biome.PLAINS and b != TerrainGen.Biome.FOREST:
+				continue
+			var h := gen.get_height(x, z)
+			if float(h) + 0.5 < TerrainGen.WATER_Y + 1.0:
+				continue # bande basse : sable/immergé, pas d'herbe
+			var gc := gen.get_color(x, z, h, h)
+			if not tint_n.has(b):
+				tint_min[b] = Vector2(gc.h, gc.v)
+				tint_max[b] = Vector2(gc.h, gc.v)
+				tint_n[b] = 0
+			tint_min[b] = Vector2(minf(tint_min[b].x, gc.h), minf(tint_min[b].y, gc.v))
+			tint_max[b] = Vector2(maxf(tint_max[b].x, gc.h), maxf(tint_max[b].y, gc.v))
+			tint_n[b] += 1
+	var tint_ok := false
+	var tint_msg := "aucun biome herbeux échantillonné"
+	for b in tint_n:
+		if tint_n[b] < 40:
+			continue
+		var t_dh: float = tint_max[b].x - tint_min[b].x
+		var t_dv: float = tint_max[b].y - tint_min[b].y
+		tint_msg = "%d colonnes, Δteinte %.3f, Δluminosité %.3f" % [tint_n[b], t_dh, t_dv]
+		if t_dh > 0.02 and t_dv > 0.05:
+			tint_ok = true
+			break
+	check(tint_ok, "le vert de l'herbe varie par patches (%s)" % tint_msg)
+
 	# Une rivière terrestre existe : colonne creusée sous le niveau de l'eau,
 	# hors océan (recherche en spirale, anneaux de 16 cubes).
 	var river_pos := Vector2i.ZERO
@@ -317,6 +369,13 @@ func _run() -> void:
 					stones += 1
 		check(plants > 0 and stones > 0, "lit du fleuve décoré : %d plantes, %d pierres" % [plants, stones])
 		check(bed_max - bed_min >= 2, "le fond du fleuve a du relief (%d..%d cubes)" % [bed_min, bed_max])
+		# Vallée fluviale : en traversant le fleuve, aucune paroi abrupte —
+		# l'ancien canyon dans la montagne tombait de 7+ cubes d'un coup.
+		var worst_step := 0
+		for dx3 in range(-60, 60):
+			worst_step = maxi(worst_step, absi(gen.get_height(river_pos.x + dx3 + 1, river_pos.y)
+				- gen.get_height(river_pos.x + dx3, river_pos.y)))
+		check(worst_step <= 5, "vallée fluviale douce (marche max %d cube(s) en traversée)" % worst_step)
 
 	# Plus d'arbres en montagne : on cherche une zone MOUNTAINS et on vérifie.
 	var mtn := Vector2i.ZERO
@@ -412,7 +471,7 @@ func _run() -> void:
 	player.toggle_lantern()
 
 	# --- Endurance + roulade ---
-	check(InputMap.has_action("Roll"), "action 'Roll' (Ctrl) enregistrée")
+	check(InputMap.has_action("Roll"), "action 'Roll' (clic molette) enregistrée")
 	check(world._stamina_bar != null, "jauge d'endurance au HUD")
 	check(absf(player.stamina - Player.STAMINA_MAX) < 0.01, "endurance pleine au départ")
 	var hp_before_roll: int = player.health
@@ -432,6 +491,39 @@ func _run() -> void:
 	player.take_damage(15)
 	check(player.health == hp_before_roll - 15, "les dégâts passent à nouveau après la roulade")
 	player.heal(15)
+
+	# --- Roll (clic molette) et Crouch (Ctrl) : touches séparées ---
+	check(InputMap.has_action("Crouch"), "action 'Crouch' (Ctrl) enregistrée")
+	world._on_player_died() # retour au spawn : la roulade a pu nous déplacer vers l'eau
+	await physics_frame
+	for i in 90: # le spawn est 3 m au-dessus du sol : laisser le temps d'atterrir
+		if player.is_on_floor():
+			break
+		await physics_frame
+	check(player.is_on_floor(), "le joueur est au sol avant le test Roll/Crouch")
+	player.stamina = Player.STAMINA_MAX
+	Input.action_press("Roll")
+	for i in 2:
+		await physics_frame
+	Input.action_release("Roll")
+	check(player._roll_timer > 0.0, "la roulade part dès l'appui (clic molette)")
+	for i in 40:
+		await physics_frame
+	world._on_player_died() # la roulade a pu nous emmener n'importe où : re-spawn
+	await physics_frame
+	for i in 90:
+		if player.is_on_floor():
+			break
+		await physics_frame
+	Input.action_press("Crouch")
+	for i in 5:
+		await physics_frame
+	check(player.crouching, "Ctrl maintenu : le joueur s'accroupit")
+	check(player._roll_timer <= 0.0, "l'accroupissement ne déclenche pas de roulade")
+	Input.action_release("Crouch")
+	for i in 2:
+		await physics_frame
+	check(not player.crouching, "relâcher Ctrl redresse le joueur")
 
 	# --- Cycle jour/nuit ---
 	var dns := world.get_children().filter(func(c): return c is DayNight)
@@ -474,6 +566,81 @@ func _run() -> void:
 	check(mismatches == 0, "eau présente exactement sur les chunks immergés (%d avec eau)" % chunks_with_water)
 	check(world._water_mat.render_priority == 1,
 		"l'eau se dessine après les autres transparents (coque du slime immergé)")
+	# L'eau est un BLOC (sans collision) : chaque face porte des UV 0..1 locales
+	# au bloc — plus d'UV en coordonnées monde.
+	var water_uv_bad := 0
+	var water_uv_found := false
+	for key in world.loaded_chunks:
+		for child in world.loaded_chunks[key].get_children():
+			if child is MeshInstance3D and child.material_override != null:
+				var wuv: PackedVector2Array = (child.mesh as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_TEX_UV]
+				water_uv_found = wuv.size() > 0
+				for uv in wuv:
+					if uv.x < -0.001 or uv.x > 1.001 or uv.y < -0.001 or uv.y > 1.001:
+						water_uv_bad += 1
+				break
+		if water_uv_found:
+			break
+	check(water_uv_found and water_uv_bad == 0,
+		"blocs d'eau : UV 0..1 par bloc (%d hors bornes)" % water_uv_bad)
+
+	# --- Optimisations d'affichage (décos, ombres, brouillard, LOD) ---
+	var deco_chunk: Chunk = null
+	for key in world.loaded_chunks:
+		if world.loaded_chunks[key].deco_mmi != null:
+			deco_chunk = world.loaded_chunks[key]
+			break
+	check(deco_chunk != null and deco_chunk.deco_mmi.visibility_range_end > 0.0,
+		"décos limitées à une distance RELATIVE (%.0f m)"
+		% (deco_chunk.deco_mmi.visibility_range_end if deco_chunk != null else -1.0))
+	world.set_decorations(false)
+	check(deco_chunk != null and not deco_chunk.deco_mmi.visible, "option : décorations au sol masquées")
+	world.set_decorations(true)
+	check(deco_chunk != null and deco_chunk.deco_mmi.visible, "option : décorations au sol réaffichées")
+	var sun_l: DirectionalLight3D = world.get_node("DirectionalLight3D")
+	var shadow_chunk: Chunk = null
+	for key in world.loaded_chunks:
+		if world.loaded_chunks[key].tree_shadow_mmi != null:
+			shadow_chunk = world.loaded_chunks[key]
+			break
+	world.set_shadows_enabled(false)
+	check(not sun_l.shadow_enabled, "option : ombres du soleil coupées")
+	check(shadow_chunk != null and shadow_chunk.tree_shadow_mmi.visible,
+		"ombres rondes sous les arbres quand les vraies ombres sont coupées")
+	world.set_shadows_enabled(true)
+	check(sun_l.shadow_enabled and (shadow_chunk == null or not shadow_chunk.tree_shadow_mmi.visible),
+		"ombres réelles restaurées, ombres rondes d'arbres masquées")
+	check(world._options.find_child("ShadowsOnCheck", true, false) != null, "case Ombres dans les options")
+	check(world._options.find_child("DecoCheck", true, false) != null, "case Décorations dans les options")
+	world._day_night._apply()
+	var envf: Environment = world.get_node("WorldEnvironment").environment
+	check(envf.fog_mode == Environment.FOG_MODE_DEPTH \
+			and absf(envf.fog_depth_end - world._view_dist_m() * 1.02) < 1.0,
+		"mur de brume calé sur la limite des chunks (opaque à %.0f m)" % envf.fog_depth_end)
+	check(player._blob != null, "ombre ronde sous le joueur")
+	check(player.camera.v_offset > 0.0, "caméra décalée : le crosshair flotte au-dessus du joueur")
+	var zl0: float = player._spring.spring_length
+	var zin := InputEventAction.new()
+	zin.action = "Zoom in"
+	zin.pressed = true
+	player._unhandled_input(zin)
+	check(player._spring.spring_length < zl0, "zoom molette : la caméra se rapproche")
+	var zout := InputEventAction.new()
+	zout.action = "Zoom out"
+	zout.pressed = true
+	player._unhandled_input(zout)
+	check(absf(player._spring.spring_length - zl0) < 0.01, "dézoom molette : la caméra s'éloigne")
+	var lod_tree = (load("res://Scènes/Monde/tree.tscn") as PackedScene).instantiate()
+	var lod_blocks: MeshInstance3D = lod_tree.get_node("Blocks")
+	var lod_mesh: MeshInstance3D = lod_tree.get_node_or_null("BlocksLOD")
+	check(lod_mesh != null and lod_blocks.visibility_range_end > 0.0 \
+			and absf(lod_mesh.visibility_range_begin - lod_blocks.visibility_range_end) < 0.01,
+		"arbre : LOD à distance fixe (bascule à %.0f m)" % lod_blocks.visibility_range_end)
+	if lod_mesh != null:
+		var full_v: int = (lod_blocks.mesh as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()
+		var lod_v: int = (lod_mesh.mesh as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()
+		check(lod_v * 3 < full_v, "LOD nettement plus léger (%d sommets vs %d)" % [lod_v, full_v])
+	lod_tree.free()
 
 	# --- Nage (dans l'océan trouvé plus haut) ---
 	# TerrainGen est en unités cube : conversions monde via Chunk.CUBE.
@@ -490,6 +657,11 @@ func _run() -> void:
 		for i in 30:
 			await physics_frame
 		check(player.swimming, "le joueur nage en eau profonde")
+		# La bascule à l'horizontale tourne autour du CENTRE DE MASSE : c'est le
+		# pivot RollCenter qui s'incline, plus l'origine du modèle (les pieds).
+		check(wrapf(player._roll_center.rotation.x, -PI, PI) < -0.15,
+			"bascule de nage portée par le pivot central (RollCenter %.2f)" % player._roll_center.rotation.x)
+		check(absf(player.model.rotation.x) < 0.01, "le modèle ne bascule plus autour des pieds")
 		for i in 240:
 			await physics_frame
 		var eq := water_world - Player.FLOAT_DEPTH
@@ -504,6 +676,17 @@ func _run() -> void:
 				toggles += 1
 				last = player.swimming
 		check(toggles == 0, "état de nage stable à la surface (%d bascule(s))" % toggles)
+
+		# Ctrl MAINTENU en nage : on plonge vers le fond (l'inverse d'Espace).
+		var y_before_dive: float = player.global_position.y
+		Input.action_press("Crouch")
+		for i in 30:
+			await physics_frame
+		Input.action_release("Crouch")
+		check(player.global_position.y < y_before_dive - 0.4,
+			"Ctrl maintenu en nage : le joueur descend (%.2f m)" % (y_before_dive - player.global_position.y))
+		for i in 60:
+			await physics_frame # la flottabilité le ramène avant la suite
 
 		# --- Ambiance sous-marine : caméra forcée sous la surface ---
 		var cam: Camera3D = player.camera
@@ -629,6 +812,43 @@ func _run() -> void:
 	world._on_player_died()
 	await physics_frame
 
+	# --- Tir dirigé vers le réticule ---
+	# Le projectile part de la poitrine VERS le point marqué par le crosshair
+	# (rayon caméra au centre de l'écran) — avant, il partait parallèle à l'axe
+	# caméra et ne croisait le réticule qu'à l'infini (parallaxe).
+	for i in 180:
+		await physics_frame
+		if player.is_on_floor():
+			break
+	check(player.is_on_floor(), "le joueur est au sol avant le test de tir")
+	player.cam_pivot.rotation.y = 0.0
+	player.cam_pivot.rotation.x = -0.6 # caméra au-dessus, réticule vers le sol devant
+	await physics_frame
+	var vp_center: Vector2 = player.get_viewport().get_visible_rect().size * 0.5
+	var aim_from: Vector3 = player.camera.project_ray_origin(vp_center)
+	var aim_to: Vector3 = aim_from + player.camera.project_ray_normal(vp_center) * Player.AIM_RAY_LENGTH
+	var aim_q := PhysicsRayQueryParameters3D.create(aim_from, aim_to)
+	aim_q.exclude = [player.get_rid()]
+	var aim_hit: Dictionary = player.get_world_3d().direct_space_state.intersect_ray(aim_q)
+	check(not aim_hit.is_empty(), "le rayon du réticule touche le décor (pitch vers le sol)")
+	if not aim_hit.is_empty():
+		var old_projs := []
+		for chld in world.get_children():
+			if chld is Projectile:
+				old_projs.append(chld)
+		player._shoot(1.0, 0.0)
+		var proj: Projectile = null
+		for chld in world.get_children():
+			if chld is Projectile and not (chld in old_projs):
+				proj = chld
+		check(proj != null, "projectile du joueur instancié")
+		if proj != null:
+			var want: Vector3 = (aim_hit["position"] - proj.global_position).normalized()
+			var aim_err := rad_to_deg(proj.velocity.normalized().angle_to(want))
+			check(aim_err < 2.0, "projectile dirigé vers le point du réticule (écart %.2f°)" % aim_err)
+			proj.queue_free()
+	player.cam_pivot.rotation.x = 0.0
+
 	# --- Ennemis : archétypes, corps, agilité ---
 	var slime := (load("res://Scènes/Acteurs/slime.tscn") as PackedScene).instantiate() as Enemy
 	world.add_child(slime)
@@ -665,6 +885,36 @@ func _run() -> void:
 	check(not scout.is_on_floor(), "éclaireur en flottaison, aucun contact au sol")
 	check(not scout._try_roll(Vector3(1, 0, 0)), "pas de roulade d'ennemi dans l'eau sans avoir pied")
 
+	# --- Sol analytique : pas de chute dans le vide hors des chunks chargés ---
+	# (bug signalé : distance de rendu au minimum, un ennemi au-delà de la zone
+	# chargée n'a plus AUCUN collider sous les pieds et tombait sans fin.)
+	var far_col := NONE
+	var far_start: int = (world.render_distance + 2) * Chunk.SIZE
+	for d in range(far_start, far_start + 600, 4):
+		var x: int = spawn_col.x + d
+		if float(gen.get_height(x, spawn_col.y)) + 0.5 < TerrainGen.WATER_Y + 1.0:
+			continue # au sec : la flottaison fausserait la mesure
+		if world.has_chunk_at(Vector3(x * Chunk.CUBE, 0.0, spawn_col.y * Chunk.CUBE)):
+			continue
+		far_col = Vector2i(x, spawn_col.y)
+		break
+	check(far_col != NONE, "colonne émergée hors des chunks chargés trouvée")
+	if far_col != NONE:
+		var far_gy := (float(gen.get_height(far_col.x, far_col.y)) + 0.5) * Chunk.CUBE
+		scout.global_position = Vector3(far_col.x * Chunk.CUBE, far_gy + 2.0, far_col.y * Chunk.CUBE)
+		scout.velocity = Vector3.ZERO
+		for i in 90:
+			await physics_frame
+		# L'ennemi a pu errer entre-temps : on compare au terrain SOUS lui.
+		var cur_gy := (float(gen.get_height(
+			roundi(scout.global_position.x / Chunk.CUBE),
+			roundi(scout.global_position.z / Chunk.CUBE))) + 0.5) * Chunk.CUBE
+		check(not world.has_chunk_at(scout.global_position),
+			"l'ennemi est resté hors de la zone de chunks chargés")
+		check(scout.global_position.y >= cur_gy - 0.05,
+			"ennemi retenu par le sol analytique (y %.2f ≥ terrain %.2f, aucun collider)"
+			% [scout.global_position.y, cur_gy])
+
 	# --- Arbre voxel généré par script (tools/gen_tree_scene.gd) ---
 	var tree = (load("res://Scènes/Monde/tree.tscn") as PackedScene).instantiate()
 	check(int(tree.get_meta("cube_count", 0)) > 500,
@@ -685,7 +935,7 @@ func _run() -> void:
 			misaligned += 1
 	check(misaligned == 0, "arbre : cubes alignés sur la grille du monde (%d sommets hors grille)" % misaligned)
 	var taabb := tmesh.get_aabb()
-	check(taabb.size.x > 3.0 and taabb.size.y > 6.0 and taabb.size.x < 15.0 and taabb.size.y < 15.0,
+	check(taabb.size.x > 4.0 and taabb.size.y > 8.0 and taabb.size.x < 20.0 and taabb.size.y < 20.0,
 		"arbre : dimensions plausibles (%.1f × %.1f × %.1f m)" % [taabb.size.x, taabb.size.y, taabb.size.z])
 	var tbody := tree.get_node("Body") as StaticBody3D
 	var trunk_shapes := 0

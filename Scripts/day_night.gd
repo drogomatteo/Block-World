@@ -120,6 +120,10 @@ var environment: Environment
 var day_length := 900.0   # durée d'un cycle complet, en secondes
 var time_of_day := 0.32   # on démarre en matinée
 var underwater := false   # posé par world.gd quand la caméra est immergée
+# Hors de l'eau, le brouillard est un MUR DE BRUME en profondeur (depth fog)
+# calé par world.gd sur la distance de rendu : les chunks naissent et meurent
+# DERRIÈRE la brume, on ne voit jamais le bord du monde se charger.
+var fog_end := 90.0       # distance monde (m) où la brume devient opaque
 
 var _sky_mat: ShaderMaterial
 var _base_fog_density := 0.0035
@@ -174,12 +178,19 @@ func _apply() -> void:
 
 	if environment != null:
 		if underwater:
+			# Sous l'eau : brouillard EXPONENTIEL dense (voile immédiat).
+			environment.fog_mode = Environment.FOG_MODE_EXPONENTIAL
 			environment.fog_light_color = UNDERWATER_FOG.darkened(1.0 - (0.25 + 0.75 * day))
 			environment.fog_density = UNDERWATER_FOG_DENSITY
 			environment.fog_sky_affect = 1.0 # le ciel aussi est voilé vu de sous l'eau
 			environment.ambient_light_color = AMBIENT_NIGHT.lerp(AMBIENT_DAY, day) * UNDERWATER_AMBIENT_TINT
 		else:
+			# En surface : mur de brume en profondeur, opaque pile à la limite
+			# des chunks (fog_end), transparent avant — l'air reste clair.
+			environment.fog_mode = Environment.FOG_MODE_DEPTH
+			environment.fog_depth_begin = fog_end * 0.45
+			environment.fog_depth_end = fog_end * 1.02
 			environment.fog_light_color = FOG_NIGHT.lerp(FOG_DAY, day).lerp(HORIZON_GLOW, glow * 0.35)
-			environment.fog_density = _base_fog_density
+			environment.fog_density = _base_fog_density # sans effet en depth (gardé pour les tests)
 			environment.fog_sky_affect = _base_fog_sky_affect
 			environment.ambient_light_color = AMBIENT_NIGHT.lerp(AMBIENT_DAY, day)

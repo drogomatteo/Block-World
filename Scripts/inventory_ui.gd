@@ -106,7 +106,7 @@ func _make_item_row(index: int) -> Control:
 	return row
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("Invetory") and not get_tree().paused:
+	if event.is_action_pressed("Inventory") and not get_tree().paused:
 		toggle()
 		get_viewport().set_input_as_handled()
 

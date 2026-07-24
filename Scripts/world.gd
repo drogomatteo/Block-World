@@ -35,9 +35,9 @@ const ENEMY_SCENES := {
 # décorations, couleur des blocs immergés) doit connaître le même seuil.
 
 # Eau animée : le matériau est créé UNE fois ici et partagé par tous les
-# chunks (chaque chunk ne construit des quads d'eau qu'au-dessus de ses
-# colonnes immergées — voir Chunk._build_water). Les vaguelettes sont ancrées
-# en coordonnées MONDE : aucune couture entre chunks.
+# chunks. L'eau est un BLOC sans collision (voir Chunk._build_water). Les
+# vaguelettes sont ancrées en coordonnées MONDE : aucune couture entre blocs
+# ni entre chunks.
 const WATER_SHADER := """
 shader_type spatial;
 render_mode blend_mix, depth_draw_always, cull_disabled, specular_schlick_ggx;
@@ -69,9 +69,9 @@ void fragment() {
 # Au-delà de cette distance, un ennemi est recyclé (despawn).
 const ENEMY_DESPAWN_DIST := 50.0
 
-@export var render_distance: int = 6     # rayon de chunks chargés autour du joueur
-										 # (chunks de 9.6 m : 16 cubes de 0.6 m)
-@export var chunk_build_per_frame: int = 2
+@export var render_distance: int = 30    # rayon de chunks chargés autour du joueur
+										 # (chunks de 9.6 m : ~288 m de vue)
+@export var chunk_build_per_frame: int = 6
 @export var max_enemies: int = 6
 @export var enemy_spawn_interval: float = 4.0
 @export var day_length: float = 900.0    # durée du cycle jour/nuit (secondes)
@@ -91,6 +91,8 @@ var _class_label: Label
 var _special_bar: ProgressBar
 var _stamina_bar: ProgressBar
 var _water_mat: ShaderMaterial
+var _shadows_on := true             # option « ombres » (vraies ombres du soleil)
+var _deco_on := true                # option « décorations au sol »
 var _options: OptionsMenu
 var _day_night: DayNight
 var _underwater := false            # la caméra est-elle sous la surface ?
@@ -206,7 +208,17 @@ func _notification(what: int) -> void:
 		save_progress()
 
 func set_render_distance(v: int) -> void:
-	render_distance = clampi(v, 1, 12)
+	render_distance = clampi(v, 1, 32)
+	# Le mur de brume (depth fog) suit la limite des chunks : on ne voit
+	# jamais les chunks apparaître/disparaître au bord.
+	if _day_night != null:
+		_day_night.fog_end = _view_dist_m()
+	# La distance des décos est relative : recaler les chunks déjà chargés.
+	for key in loaded_chunks:
+		var c: Chunk = loaded_chunks[key]
+		c.deco_view_dist = _deco_view_dist()
+		if c.deco_mmi != null:
+			c.deco_mmi.visibility_range_end = c.deco_view_dist
 	# Avant la création du joueur, current_center n'est pas encore valide :
 	# rafraîchir maintenant déchargerait le chunk de spawn.
 	if player != null:
@@ -260,6 +272,13 @@ func _player_chunk() -> Vector2i:
 		floori(player.global_position.x / w),
 		floori(player.global_position.z / w))
 
+# Un chunk (donc son collider de terrain) est-il chargé sous cette position ?
+# Filet anti-chute des ennemis : hors de la zone chargée, il n'y a AUCUNE
+# collision — ils se rabattent alors sur le sol analytique du générateur.
+func has_chunk_at(pos: Vector3) -> bool:
+	var w := chunk_size * Chunk.CUBE
+	return loaded_chunks.has(Vector2i(floori(pos.x / w), floori(pos.z / w)))
+
 func _refresh_chunk_list() -> void:
 	var needed := {}
 	for dx in range(-render_distance, render_distance + 1):
@@ -297,10 +316,43 @@ func _build_chunk(key: Vector2i) -> void:
 	c.cx = key.x
 	c.cz = key.y
 	c.water_material = _water_mat
+	c.deco_view_dist = _deco_view_dist()
+	c.deco_visible = _deco_on
+	c.tree_shadows_visible = not _shadows_on
 	c.position = Vector3(key.x * chunk_size, 0, key.y * chunk_size) * Chunk.CUBE
 	add_child(c)
 	c.build()
 	loaded_chunks[key] = c
+
+# ---------- Réglages graphiques (appelés par OptionsMenu) ----------
+
+# Distance de rendu en mètres (rayon de chunks -> emprise monde).
+func _view_dist_m() -> float:
+	return float(render_distance) * float(chunk_size) * Chunk.CUBE
+
+# Les petites décos disparaissent à la moitié de la distance d'affichage :
+# RELATIF au réglage, avec un plancher pour rester visibles de près.
+func _deco_view_dist() -> float:
+	return maxf(_view_dist_m() * 0.5, 20.0)
+
+# Ombres réelles on/off. Quand elles sont coupées, les ombres RONDES des
+# arbres prennent le relais (celles des entités sont toujours affichées).
+func set_shadows_enabled(on: bool) -> void:
+	_shadows_on = on
+	($DirectionalLight3D as DirectionalLight3D).shadow_enabled = on
+	for key in loaded_chunks:
+		var c: Chunk = loaded_chunks[key]
+		c.tree_shadows_visible = not on
+		if c.tree_shadow_mmi != null:
+			c.tree_shadow_mmi.visible = not on
+
+func set_decorations(on: bool) -> void:
+	_deco_on = on
+	for key in loaded_chunks:
+		var c: Chunk = loaded_chunks[key]
+		c.deco_visible = on
+		if c.deco_mmi != null:
+			c.deco_mmi.visible = on
 
 # ---------- Ennemis ----------
 
@@ -375,6 +427,7 @@ func _make_day_night() -> void:
 	_day_night.sun = $DirectionalLight3D
 	_day_night.environment = ($WorldEnvironment as WorldEnvironment).environment
 	_day_night.day_length = day_length
+	_day_night.fog_end = _view_dist_m() # mur de brume au bord des chunks
 	add_child(_day_night)
 
 # Teinte bleutée plein écran affichée quand la caméra est sous l'eau.

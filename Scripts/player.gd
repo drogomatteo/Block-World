@@ -11,6 +11,7 @@ extends CharacterBody3D
 const PROJECTILE_SCENE := preload("res://Scènes/Objets/projectile.tscn")
 
 const JUMP_VELOCITY := 6.5
+const AIM_RAY_LENGTH := 90.0 # portée du rayon de visée du réticule (tirs)
 const DASH_SPEED := 18.0
 const DASH_DURATION := 0.22
 
@@ -42,6 +43,21 @@ const STAMINA_REGEN_DELAY := 0.7
 const ROLL_COST := 30.0
 const ROLL_SPEED := 11.0
 const ROLL_DURATION := 0.45
+
+# Accroupi (Ctrl MAINTENU) : marche ralentie au sol, descente vers le fond
+# dans l'eau. La roulade a sa propre touche (clic molette) depuis le rebind —
+# plus de partage tap/maintien.
+const CROUCH_SPEED_FACTOR := 0.45
+
+# Zoom caméra (molette) : longueur du SpringArm, bornée.
+const ZOOM_STEP := 0.6
+const ZOOM_MIN := 2.0
+const ZOOM_MAX := 9.0
+
+# Décalage écran de la caméra : la caméra monte dans son repère, le corps du
+# joueur apparaît donc SOUS le centre de l'écran — le crosshair flotte juste
+# au-dessus de la tête (visée dégagée).
+const CAM_V_OFFSET := 0.9
 
 const CLASSES := {
 	"warrior": {
@@ -76,6 +92,7 @@ var gen: TerrainGen = null # posé par world.gd : sonde le terrain pour savoir o
 var mouse_sensitivity := 0.005 # réglable depuis le menu Options
 
 var swimming := false # état de nage, lu par world.gd et les tests
+var crouching := false # accroupi (Ctrl maintenu), lu par les tests
 
 var stamina := STAMINA_MAX # lue par world.gd pour la jauge du HUD
 var _stamina_delay := 0.0  # délai avant régénération
@@ -112,6 +129,8 @@ var _dash_timer := 0.0
 var _dash_dir := Vector3.ZERO
 var _dash_hit: Array = []
 
+var _spring: SpringArm3D   # bras de caméra (zoom à la molette)
+var _blob: MeshInstance3D  # ombre ronde posée au sol sous le joueur
 var model: Node3D          # tourne vers la direction de déplacement
 var weapon: Node3D         # arme tenue en main droite (pivot des animations)
 var hitbox: Area3D         # zone d'attaque mêlée, enfant du modèle
@@ -168,8 +187,16 @@ func _ready() -> void:
 	_gear_anim = $GearAnim
 
 	cam_pivot.rotation.x = _pitch
+	_spring = $CamPivot/SpringArm
 	# Ne pas cogner la caméra sur sa propre capsule (RID connu qu'au runtime).
-	($CamPivot/SpringArm as SpringArm3D).add_excluded_object(get_rid())
+	_spring.add_excluded_object(get_rid())
+	# Le crosshair (centre écran) flotte au-dessus de la tête, pas dessus.
+	camera.v_offset = CAM_V_OFFSET
+
+	# Ombre ronde sous les pieds : repositionnée sur le sol à chaque frame
+	# (feedback d'atterrissage, lisible même ombres désactivées).
+	_blob = FX.blob_shadow(0.55)
+	add_child(_blob)
 
 	# Les meshes de l'arme deviennent uniques à CETTE instance : la lueur de
 	# rareté (équipement) ne doit pas contaminer les ressources partagées de
@@ -200,10 +227,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			_try_special()
 	elif event.is_action_pressed("Lantern"):
 		toggle_lantern()
+	elif event.is_action_pressed("Zoom in"):
+		_spring.spring_length = clampf(_spring.spring_length - ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
+	elif event.is_action_pressed("Zoom out"):
+		_spring.spring_length = clampf(_spring.spring_length + ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
 
 func _physics_process(delta: float) -> void:
 	_attack_timer = maxf(0.0, _attack_timer - delta)
 	special_timer = maxf(0.0, special_timer - delta)
+	_update_blob()
 
 	# Endurance : régénère après un court délai sans dépense.
 	_stamina_delay = maxf(0.0, _stamina_delay - delta)
@@ -224,8 +256,8 @@ func _physics_process(delta: float) -> void:
 		_roll_timer -= delta
 		velocity.x = _roll_dir.x * ROLL_SPEED
 		velocity.z = _roll_dir.z * ROLL_SPEED
-		# Si la roulade part de la nage, le corps était basculé : on le redresse.
-		model.rotation.x = lerpf(model.rotation.x, 0.0, 8.0 * delta)
+		# Si la roulade part de la nage, le corps était basculé sur RollCenter :
+		# le clip "roll" (fondu 0.1 s) reprend ce pivot et le redresse tout seul.
 		move_and_slide()
 		return
 
@@ -241,7 +273,9 @@ func _physics_process(delta: float) -> void:
 	if swimming:
 		_swim_process(delta, depth)
 		return
-	model.rotation.x = lerpf(model.rotation.x, 0.0, 8.0 * delta) # se redresse en sortant de l'eau
+	# Se redresse en sortant de l'eau : la bascule de nage vit sur RollCenter
+	# (pivot central) ; wrapf car le clip "roll" laisse ce pivot à -TAU.
+	_roll_center.rotation.x = lerpf(wrapf(_roll_center.rotation.x, -PI, PI), 0.0, 8.0 * delta)
 
 	if Input.is_action_pressed("Jump") and is_on_floor():
 		velocity.y = JUMP_VELOCITY
@@ -262,12 +296,20 @@ func _physics_process(delta: float) -> void:
 		_start_roll(move_dir)
 		return
 
+	crouching = Input.is_action_pressed("Crouch") and is_on_floor()
+
 	# Le sprint consomme de l'endurance ; à sec, on retombe à la vitesse normale.
-	var sprinting := Input.is_action_pressed("Run") and stamina > 0.5 and move_dir.length() > 0.01
+	# Accroupi, ni sprint ni vitesse normale : on avance au ralenti.
+	var sprinting := Input.is_action_pressed("Run") and not crouching \
+		and stamina > 0.5 and move_dir.length() > 0.01
 	if sprinting:
 		stamina = maxf(0.0, stamina - STAMINA_SPRINT_DRAIN * delta)
 		_stamina_delay = STAMINA_REGEN_DELAY
 	var speed := move_speed * (1.5 if sprinting else 1.0)
+	if crouching:
+		speed = move_speed * CROUCH_SPEED_FACTOR
+	# Feedback visuel : le corps se tasse un peu tant qu'on est accroupi.
+	model.scale.y = lerpf(model.scale.y, 0.82 if crouching else 1.0, 10.0 * delta)
 
 	if move_dir.length() > 0.01:
 		velocity.x = move_dir.x * speed
@@ -285,6 +327,15 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	_auto_step(move_dir)
 
+# L'ombre ronde colle au SOL (pas aux pieds) : en saut ou en nage elle reste
+# sur le terrain en dessous, comme une vraie ombre portée.
+func _update_blob() -> void:
+	if _blob == null or gen == null:
+		return
+	var h := gen.get_height(roundi(global_position.x / Chunk.CUBE), roundi(global_position.z / Chunk.CUBE))
+	_blob.global_position = Vector3(global_position.x,
+		(float(h) + 0.5) * Chunk.CUBE + 0.03, global_position.z)
+
 # ---------- Auto-montée ----------
 
 # Appelée APRÈS move_and_slide : on n'agit que si le corps a RÉELLEMENT buté
@@ -300,7 +351,10 @@ func _auto_step(move_dir: Vector3) -> void:
 	var blocked := false
 	for i in get_slide_collision_count():
 		var n := get_slide_collision(i).get_normal()
-		if n.y < 0.5 and n.dot(move_dir) < -0.5:
+		# Tout produit scalaire négatif suffit : même en abordant le bloc de
+		# biais (mur pas en face du déplacement), on tente la montée — c'est
+		# test_move qui tranche ensuite s'il y a vraiment la place au-dessus.
+		if n.y < 0.5 and n.dot(move_dir) < 0.0:
 			blocked = true
 			break
 	if not blocked:
@@ -369,8 +423,10 @@ func _swim_process(delta: float, depth: float) -> void:
 	velocity.x = move_toward(velocity.x, move_dir.x * speed, SWIM_ACCEL * delta)
 	velocity.z = move_toward(velocity.z, move_dir.z * speed, SWIM_ACCEL * delta)
 
+	crouching = false # l'accroupi est un état terrestre ; dans l'eau, Ctrl = plonger
+
 	# Roulade dans l'eau : autorisée seulement si on a PIED (contact au sol) —
-	# en pleine flottaison, pas d'appui, donc pas d'esquive.
+	# en pleine flottaison, pas d'appui, pas d'esquive.
 	if Input.is_action_just_pressed("Roll") and is_on_floor() and stamina >= ROLL_COST:
 		var flat := Vector3(move_dir.x, 0.0, move_dir.z)
 		_start_roll(flat)
@@ -389,13 +445,18 @@ func _swim_process(delta: float, depth: float) -> void:
 		target_v += lift
 		if Input.is_action_pressed("Jump"):
 			target_v = SWIM_UP_SPEED
+		elif Input.is_action_pressed("Crouch"):
+			target_v = -SWIM_UP_SPEED # Ctrl maintenu : on plonge vers le fond
 		velocity.y = move_toward(velocity.y, target_v, WATER_DRAG * delta)
 
-	# Le modèle bascule à l'horizontale quand on nage ; crawl (moulinets +
-	# battements) ou surplace : clips de la scène.
+	# Le corps bascule à l'horizontale quand on nage, autour du CENTRE DE MASSE :
+	# le pivot RollCenter (au centre du corps), pas l'origine du modèle (les
+	# pieds). wrapf car le clip "roll" laisse ce pivot à -TAU. Crawl (moulinets
+	# + battements) ou surplace : clips de la scène.
 	var moving := input_dir.length() > 0.01
 	var tilt := -1.25 if moving else -0.35
-	model.rotation.x = lerpf(model.rotation.x, tilt, 5.0 * delta)
+	_roll_center.rotation.x = lerpf(wrapf(_roll_center.rotation.x, -PI, PI), tilt, 5.0 * delta)
+	model.scale.y = lerpf(model.scale.y, 1.0, 10.0 * delta) # plus d'accroupi en nage
 	_play_move("swim_move" if moving else "swim_idle", 4.5 if moving else 2.0)
 
 	move_and_slide()
@@ -415,16 +476,32 @@ func _try_attack() -> void:
 			if body.is_in_group("enemies") and body.has_method("take_damage"):
 				body.take_damage(attack_damage, global_position)
 
-# Tire un projectile dans la direction visée par la caméra (pitch inclus).
+# Point du monde visé par le RÉTICULE : rayon caméra à travers le centre de
+# l'écran (le crosshair y est dessiné), premier obstacle touché — décor ou
+# ennemi — sinon point lointain sur le rayon. Le corps du joueur est exclu
+# (la caméra est derrière lui).
+func _aim_point() -> Vector3:
+	var center := get_viewport().get_visible_rect().size * 0.5
+	var from := camera.project_ray_origin(center)
+	var to := from + camera.project_ray_normal(center) * AIM_RAY_LENGTH
+	var q := PhysicsRayQueryParameters3D.create(from, to)
+	q.exclude = [get_rid()]
+	var hit := get_world_3d().direct_space_state.intersect_ray(q)
+	return hit["position"] if not hit.is_empty() else to
+
+# Tire un projectile VERS le point visé par le réticule (et non parallèle à
+# l'axe caméra : parti de la poitrine, un tir parallèle passait à côté de ce
+# que marquait le crosshair, surtout à courte portée).
 func _shoot(damage_mult: float, yaw_offset: float) -> void:
-	var dir := -camera.global_transform.basis.z
+	var start := global_position + Vector3(0, 1.2, 0)
+	var dir := (_aim_point() - start).normalized()
 	if yaw_offset != 0.0:
 		dir = dir.rotated(Vector3.UP, yaw_offset)
 	model.rotation.y = atan2(-dir.x, -dir.z) # le perso se tourne vers sa cible
 	var p := PROJECTILE_SCENE.instantiate() as Projectile
 	p.setup(dir, _proj_speed, int(round(attack_damage * damage_mult)), "enemies", _proj_color, "player")
 	get_parent().add_child(p)
-	p.global_position = global_position + Vector3(0, 1.2, 0) + dir * 0.9
+	p.global_position = start + dir * 0.9 # sur la ligne de visée : même direction depuis la bouche du canon
 
 func _try_special() -> void:
 	if special_timer > 0.0 or _roll_timer > 0.0:

@@ -1,0 +1,25 @@
+[remap]
+
+importer="wavefront_obj"
+importer_version=1
+type="Mesh"
+uid="uid://c4plvr5nccypa"
+path="res://.godot/imported/wallBrick01.obj-d99c8f1d7f995c600863d6dac505a47c.mesh"
+
+[deps]
+
+files=["res://.godot/imported/wallBrick01.obj-d99c8f1d7f995c600863d6dac505a47c.mesh"]
+
+source_file="res://Assets/Essential_Isometric_3D_Block_Pack_Devilsworkshop_v2.0/Assets/OBJ/wallBrick01.obj"
+dest_files=["res://.godot/imported/wallBrick01.obj-d99c8f1d7f995c600863d6dac505a47c.mesh", "res://.godot/imported/wallBrick01.obj-d99c8f1d7f995c600863d6dac505a47c.mesh"]
+
+[params]
+
+generate_tangents=true
+generate_lods=true
+generate_shadow_mesh=true
+generate_lightmap_uv2=false
+generate_lightmap_uv2_texel_size=0.2
+scale_mesh=Vector3(1, 1, 1)
+offset_mesh=Vector3(0, 0, 0)
+force_disable_mesh_compression=false

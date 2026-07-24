@@ -67,6 +67,7 @@ var _body_mat: StandardMaterial3D
 var _base_albedo := Color.WHITE # albedo d'origine du torse (restauré après le flash)
 var player: Node3D
 var _gen: TerrainGen = null # récupéré sur le World parent (flottaison dans l'eau)
+var _blob: MeshInstance3D = null # ombre ronde posée au sol
 
 var model: Node3D          # tous les visuels (s'écrase pour le slime)
 var _roll_center: Node3D   # pivot central de la galipette (humanoïdes)
@@ -116,11 +117,31 @@ func _ready() -> void:
 	_body_mat = body_mesh.mesh.material
 	_base_albedo = _body_mat.albedo_color
 
+	# Ombre ronde sous l'ennemi, dimensionnée sur son gabarit.
+	_blob = FX.blob_shadow(_size * 0.8)
+	add_child(_blob)
+
 # ---------- IA ----------
 
 func _physics_process(delta: float) -> void:
 	_attack_timer = maxf(0.0, _attack_timer - delta)
 	_jump_timer = maxf(0.0, _jump_timer - delta)
+	if _gen != null:
+		var bh := _gen.get_height(roundi(global_position.x / Chunk.CUBE), roundi(global_position.z / Chunk.CUBE))
+		var gy := (float(bh) + 0.5) * Chunk.CUBE # dessus du terrain (déjà calculé pour l'ombre)
+		# Sol analytique : hors de la zone de chunks chargés il n'y a aucun
+		# collider — le générateur retient l'ennemi au niveau du terrain au
+		# lieu de le laisser tomber dans le vide. Seulement hors zone chargée :
+		# sur un chunk chargé, la vraie collision fait foi (près d'un muret, la
+		# colonne arrondie pourrait être la voisine plus haute).
+		var w := get_parent()
+		if global_position.y < gy and w != null and w.has_method("has_chunk_at") \
+				and not w.has_chunk_at(global_position):
+			global_position.y = gy
+			velocity.y = maxf(velocity.y, 0.0)
+		# L'ombre ronde colle au sol sous l'ennemi (même en saut/flottaison).
+		if _blob != null:
+			_blob.global_position = Vector3(global_position.x, gy + 0.03, global_position.z)
 	_strafe_t += delta
 	if _agile:
 		_stamina = minf(STAMINA_MAX, _stamina + STAMINA_REGEN * delta)

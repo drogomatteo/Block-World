@@ -39,11 +39,32 @@ const RIVER_HALF_W := 9.0  # demi-largeur du lit immergé, en cubes
 const RIVER_BANK_W := 16.0 # demi-largeur totale, berges comprises
 const RIVER_BED := -5.0    # fond du lit, en cubes
 
+# Vallées fluviales : le relief S'ABAISSE progressivement à l'approche d'un
+# fleuve (fini le lit qui tranche une montagne en canyon à parois verticales).
+# Le facteur d'abaissement est |bruit de fleuve| (0 au centre du fleuve) : il
+# est continu PARTOUT, contrairement à la distance normalisée qui s'arrête au
+# préfiltre RIVER_GATE et créerait une marche à sa frontière.
+const RIVER_VALLEY_N := 0.28   # |bruit| sous lequel la vallée se creuse
+const RIVER_VALLEY_CAP := 4.0  # hauteur max (en cubes) au bord du fleuve
+
+# Relief CONTINU : une seule fonction de hauteur pour toute la terre, sans
+# amplitude ni base par biome (fini les marches aux frontières de biomes).
+# L'amplitude croît avec le bruit lui-même (lissée par smoothstep) : les creux
+# restent des plaines douces (AMP_LOW), les hauts du bruit s'étirent en vraies
+# montagnes (AMP_HIGH). Le biome MONTAGNE n'est plus une zone du bruit de
+# biome : c'est toute colonne dont la hauteur dépasse MOUNTAIN_T.
+const LAND_BASE := 2.0   # hauteur moyenne des terres, en cubes
+const AMP_LOW := 5.0     # amplitude des plaines (creux du bruit)
+const AMP_HIGH := 55.0   # amplitude des sommets (hauts du bruit, ~33 m)
+const MOUNTAIN_T := 18.0 # seuil montagne, en cubes (~10.8 m au-dessus de la mer)
+const SNOWCAP_Y := 30    # au-dessus : sommets enneigés (~18 m)
+
 var world_seed: int
 var height_noise: FastNoiseLite
 var biome_noise: FastNoiseLite
 var continent_noise: FastNoiseLite
 var river_noise: FastNoiseLite
+var tint_noise: FastNoiseLite
 
 func setup(seed_value: int) -> void:
 	world_seed = seed_value
@@ -51,23 +72,25 @@ func setup(seed_value: int) -> void:
 	height_noise = FastNoiseLite.new()
 	height_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	height_noise.seed = seed_value
-	# 0.02/m d'origine × 0.6 m/cube : mêmes reliefs monde qu'avant.
-	height_noise.frequency = 0.012
+	# Fréquence très basse (reliefs ~240 m de large) : l'amplitude a grimpé
+	# (AMP_HIGH) mais les pentes restent douces car le bruit est très étiré.
+	height_noise.frequency = 0.0025
 	height_noise.fractal_octaves = 4
 
 	# Un bruit très basse fréquence = grandes zones = biomes cohérents.
 	biome_noise = FastNoiseLite.new()
 	biome_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	biome_noise.seed = seed_value + 4096
-	# ~0.0012/m en monde : biomes ~2.5× plus étendus que la version précédente.
-	biome_noise.frequency = 0.0007
+	# Très basse fréquence : zones climatiques ~1.5 km de large (encore ~1.75×
+	# plus étendues que la version précédente).
+	biome_noise.frequency = 0.0004
 
 	# Continents/océans : encore plus basse fréquence que les biomes, pour de
 	# vraies mers à explorer (et non des lacs géants).
 	continent_noise = FastNoiseLite.new()
 	continent_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	continent_noise.seed = seed_value + 8192
-	continent_noise.frequency = 0.0005
+	continent_noise.frequency = 0.00035
 
 	# Fleuves : peu d'octaves = méandres amples et lisses ; fréquence basse =
 	# fleuves espacés (plusieurs centaines de mètres entre deux).
@@ -77,48 +100,62 @@ func setup(seed_value: int) -> void:
 	river_noise.frequency = 0.0012
 	river_noise.fractal_octaves = 2
 
+	# Teinte de l'herbe : patches de verts (~30 m) qui font dériver doucement
+	# la couleur des plaines/forêts — jamais le même vert partout.
+	tint_noise = FastNoiseLite.new()
+	tint_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	tint_noise.seed = seed_value + 32768
+	tint_noise.frequency = 0.02
+
 func get_biome(wx: int, wz: int) -> int:
 	if continent_noise.get_noise_2d(float(wx), float(wz)) < OCEAN_T:
 		return Biome.OCEAN
 	return _land_biome(wx, wz)
 
 # Biome terrestre « sous-jacent » (utilisé aussi pour raccorder le rivage).
+# La montagne est purement altimétrique : au-dessus de MOUNTAIN_T, quelle que
+# soit la zone climatique, la colonne est MOUNTAINS. En dessous, le bruit de
+# biome répartit les climats (le relief, lui, est le même partout : continu).
 func _land_biome(wx: int, wz: int) -> int:
+	if _land_height(wx, wz) >= MOUNTAIN_T:
+		return Biome.MOUNTAINS
 	var v := biome_noise.get_noise_2d(float(wx), float(wz))
 	if v < -0.45:
 		return Biome.DESERT
-	elif v < 0.05:
+	elif v < 0.1:
 		return Biome.PLAINS
-	elif v < 0.4:
+	elif v < 0.5:
 		return Biome.FOREST
-	elif v < 0.62:
-		return Biome.MOUNTAINS
 	return Biome.SNOW
 
-# Hauteur (entière) du sommet de la colonne au point monde (wx, wz).
-func get_height(wx: int, wz: int) -> int:
+# Hauteur terrestre CONTINUE (en cubes, non arrondie), identique pour tous les
+# biomes. smoothstep fait croître l'amplitude avec le bruit : dérivable partout,
+# donc aucune rupture de pente — les montagnes émergent progressivement des
+# collines au lieu d'apparaître à une frontière.
+func _land_height(wx: int, wz: int) -> float:
 	var n := height_noise.get_noise_2d(float(wx), float(wz))
-	# Amplitudes en cubes, recalées sur CUBE = 0.6 m : mêmes hauteurs monde.
-	var amp := 4.0
-	var base := 0.0
-	match _land_biome(wx, wz):
-		Biome.DESERT:
-			amp = 2.5
-		Biome.PLAINS:
-			amp = 4.0
-		Biome.FOREST:
-			amp = 6.0
-		Biome.MOUNTAINS:
-			amp = 17.0
-			base = 5.0
-		Biome.SNOW:
-			amp = 12.0
-			base = 7.0
-	var h := n * amp + base
+	var t := smoothstep(0.0, 0.6, n)
+	var h := LAND_BASE + n * lerpf(AMP_LOW, AMP_HIGH, t)
+	# Vallée fluviale : près d'un fleuve, la hauteur est plafonnée puis relevée
+	# en douceur avec la distance. Comme le BIOME lit cette hauteur, les flancs
+	# de vallée redeviennent plaines/forêt — un fleuve qui traverse un massif
+	# creuse une vraie vallée verte, pas un canyon gris à parois verticales.
+	var rn := absf(river_noise.get_noise_2d(float(wx), float(wz)))
+	if rn < RIVER_VALLEY_N:
+		var vt := smoothstep(0.0, 1.0, rn / RIVER_VALLEY_N)
+		h = lerpf(minf(h, RIVER_VALLEY_CAP), h, vt)
 	# Les biomes terrestres ne descendent JAMAIS sous le niveau de l'eau : les
 	# seuls plans d'eau du monde sont l'océan et les rivières (fini les lacs
 	# aléatoires creusés par le bruit de relief).
-	h = maxf(h, WATER_Y + 0.1)
+	return maxf(h, WATER_Y + 0.1)
+
+# Hauteur (entière) du sommet de la colonne au point monde (wx, wz).
+func get_height(wx: int, wz: int) -> int:
+	# Bruit « détail » : le bruit de relief échantillonné 3× plus serré, pour les
+	# petites structures (dunes du fond marin, fosses du lit de fleuve) qui
+	# doivent varier vite même si le relief général est très étiré.
+	var n := height_noise.get_noise_2d(float(wx) * 3.0, float(wz) * 3.0)
+	var h := _land_height(wx, wz)
 	var c := continent_noise.get_noise_2d(float(wx), float(wz))
 	if c < OCEAN_T:
 		# Plateau continental : à la côte (t=0) on rejoint la hauteur terrestre
@@ -172,6 +209,13 @@ func get_color(wx: int, wz: int, y: int, h: int) -> Color:
 			c = Color(0.90, 0.93, 0.96)
 		Biome.OCEAN:
 			c = Color(0.80, 0.73, 0.52) # îlots et hauts-fonds : sable
+	if biome == Biome.PLAINS or biome == Biome.FOREST:
+		# Dérive de teinte de l'herbe (tint_noise) : plus jaune/claire ou plus
+		# profonde selon le patch. Appliquée AVANT les cas plage/immergé/enterré
+		# (qui écrasent ou assombrissent la couleur, teinte comprise).
+		var t := tint_noise.get_noise_2d(float(wx), float(wz))
+		c.h = wrapf(c.h + t * 0.03, 0.0, 1.0)
+		c.v = clampf(c.v * (1.0 + t * 0.12), 0.0, 1.0)
 	var top := float(h) + 0.5
 	if top < WATER_Y:
 		# Bloc immergé : lit sableux, assombri avec la profondeur.
@@ -183,9 +227,9 @@ func get_color(wx: int, wz: int, y: int, h: int) -> Color:
 		# un creux de terrain intérieur au niveau de la mer reste de l'herbe.
 		c = Color(0.80, 0.73, 0.52)
 	if y < h:
-		c = c.darkened(0.35)
-	elif biome == Biome.MOUNTAINS and y >= 20:
-		c = Color(0.92, 0.94, 0.97) # sommets enneigés (~12 m)
+		c = c.darkened(0.35) # bloc enterré
+	elif biome == Biome.MOUNTAINS and y >= SNOWCAP_Y:
+		c = Color(0.92, 0.94, 0.97) # sommets enneigés
 	return c
 
 # Vrai s'il existe une colonne d'eau réelle (sommet immergé) à ≤ radius cubes.
@@ -215,8 +259,9 @@ func can_spawn_flora(wx: int, wz: int) -> bool:
 # Taille (en cubes) des cellules de la grille d'arbres : AU PLUS un arbre par
 # cellule, à une position jitterée à l'intérieur (marge de 2 cubes aux bords).
 # Deux arbres ne peuvent donc jamais être collés : ≥ ~5 cubes (3 m) entre
-# troncs, même entre cellules voisines.
-const TREE_CELL := 12
+# troncs, même entre cellules voisines. 16 depuis l'agrandissement des arbres
+# (canopées ~12 m : mêmes probabilités par cellule, forêts plus aérées).
+const TREE_CELL := 16
 
 func has_tree(wx: int, wz: int) -> bool:
 	# La colonne doit être LE point jitteré de sa cellule...

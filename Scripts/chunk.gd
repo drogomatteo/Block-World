@@ -19,6 +19,11 @@ var cz: int
 # préréglées dans Scènes/Monde/chunk.tscn.
 @export var tree_scenes: Array[PackedScene] = []
 var water_material: Material # partagé, créé une seule fois par world.gd
+var deco_view_dist := 0.0    # distance d'affichage des décos (0 = illimitée)
+var deco_visible := true     # option « décorations au sol »
+var tree_shadows_visible := false # ombres rondes sous les arbres (ombres OFF)
+var deco_mmi: MultiMeshInstance3D        # relu par world.gd (toggles à chaud)
+var tree_shadow_mmi: MultiMeshInstance3D
 
 func build() -> void:
 	_build_visual()
@@ -101,6 +106,7 @@ func _build_collision() -> void:
 func _build_trees() -> void:
 	if tree_scenes.is_empty():
 		return
+	var shadow_pos: Array[Vector3] = []
 	for lx in SIZE:
 		for lz in SIZE:
 			var wx := cx * SIZE + lx
@@ -118,6 +124,25 @@ func _build_trees() -> void:
 				# rotation par quarts de tour (déterministe), qui préserve la grille.
 				t.position = Vector3(lx * CUBE, (float(h) + 0.5) * CUBE, lz * CUBE)
 				t.rotation.y = float(int(gen.rand01(wx, wz, 13) * 4.0)) * (PI * 0.5)
+				shadow_pos.append(t.position + Vector3(0, 0.04, 0))
+	if shadow_pos.is_empty():
+		return
+	# Ombres rondes sous les troncs : un seul MultiMesh par chunk, affiché
+	# uniquement quand les vraies ombres sont désactivées (sinon elles se
+	# cumuleraient avec l'ombre portée du soleil).
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	# Rayon 4 m : les troncs font ~4 m de LARGE depuis l'agrandissement des
+	# arbres — plus petit, le disque disparaît entièrement sous le tronc.
+	mm.mesh = FX.blob_shadow_mesh(4.0)
+	mm.instance_count = shadow_pos.size()
+	for i in shadow_pos.size():
+		mm.set_instance_transform(i, Transform3D(Basis(), shadow_pos[i]))
+	tree_shadow_mmi = MultiMeshInstance3D.new()
+	tree_shadow_mmi.multimesh = mm
+	tree_shadow_mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	tree_shadow_mmi.visible = tree_shadows_visible
+	add_child(tree_shadow_mmi)
 
 # Décorations (herbe, fleurs, cactus, rochers) : un seul MultiMesh de plus
 # par chunk, mise à l'échelle par instance via la Basis du transform.
@@ -154,38 +179,48 @@ func _build_deco() -> void:
 		mm.set_instance_transform(i, transforms[i])
 		mm.set_instance_color(i, colors[i])
 
-	var mmi := MultiMeshInstance3D.new()
-	mmi.multimesh = mm
-	add_child(mmi)
+	deco_mmi = MultiMeshInstance3D.new()
+	deco_mmi.multimesh = mm
+	deco_mmi.visible = deco_visible
+	if deco_view_dist > 0.0:
+		# Les petites décos disparaissent (en fondu) bien avant la limite des
+		# chunks : invisible de loin de toute façon, et ça allège le rendu.
+		deco_mmi.visibility_range_end = deco_view_dist
+		deco_mmi.visibility_range_end_margin = 4.0
+		deco_mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	add_child(deco_mmi)
 
-# Surface d'eau : un quad par colonne immergée, rien ailleurs. Les lacs ont
-# donc une vraie étendue locale (fini l'océan infini qui suivait le joueur).
-# Les sommets sont déplacés par le vertex shader du matériau (vaguelettes en
-# coordonnées monde) : les bords coïncident entre colonnes et entre chunks.
+# L'eau est un BLOC comme les autres, SANS COLLISION : chaque colonne immergée
+# porte un bloc d'eau de surface, aligné sur la grille du monde, dont on émet
+# la face du dessus (les faces latérales et le dessous sont toujours contre du
+# terrain ou un autre bloc d'eau : jamais visibles, on ne les génère pas). Le
+# dessus du bloc est posé au niveau WATER_Y (bloc de surface partiel, comme le
+# gameplay l'attend).
+# Aucun StaticBody : on traverse l'eau librement (la nage sonde le terrain).
 func _build_water() -> void:
 	if water_material == null:
 		return
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var any := false
-	var y := TerrainGen.WATER_Y * CUBE # niveau monde de l'eau
+	var y := TerrainGen.WATER_Y * CUBE # dessus du bloc d'eau de surface
 	for lx in SIZE:
 		for lz in SIZE:
 			var wx := cx * SIZE + lx
 			var wz := cz * SIZE + lz
 			if float(gen.get_height(wx, wz)) + 0.5 >= TerrainGen.WATER_Y:
-				continue # colonne émergée : pas d'eau ici
+				continue # colonne émergée : pas de bloc d'eau ici
 			any = true
 			var x0 := (lx - 0.5) * CUBE
 			var x1 := (lx + 0.5) * CUBE
 			var z0 := (lz - 0.5) * CUBE
 			var z1 := (lz + 0.5) * CUBE
-			_water_vertex(st, Vector3(x0, y, z0))
-			_water_vertex(st, Vector3(x1, y, z0))
-			_water_vertex(st, Vector3(x1, y, z1))
-			_water_vertex(st, Vector3(x0, y, z0))
-			_water_vertex(st, Vector3(x1, y, z1))
-			_water_vertex(st, Vector3(x0, y, z1))
+			_water_vertex(st, Vector3(x0, y, z0), Vector2(0, 0))
+			_water_vertex(st, Vector3(x1, y, z0), Vector2(1, 0))
+			_water_vertex(st, Vector3(x1, y, z1), Vector2(1, 1))
+			_water_vertex(st, Vector3(x0, y, z0), Vector2(0, 0))
+			_water_vertex(st, Vector3(x1, y, z1), Vector2(1, 1))
+			_water_vertex(st, Vector3(x0, y, z1), Vector2(0, 1))
 	if not any:
 		return
 	st.generate_tangents() # requis par le NORMAL_MAP du shader d'eau
@@ -195,10 +230,12 @@ func _build_water() -> void:
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
 
-func _water_vertex(st: SurfaceTool, v: Vector3) -> void:
+func _water_vertex(st: SurfaceTool, v: Vector3, uv: Vector2) -> void:
 	st.set_normal(Vector3.UP)
-	# UV en coordonnées monde : nécessaire pour generate_tangents().
-	st.set_uv(Vector2(cx * SIZE * CUBE + v.x, cz * SIZE * CUBE + v.z))
+	# UV locales au bloc (0..1 par face). Les vaguelettes du shader, elles,
+	# s'ancrent en coordonnées MONDE (via MODEL_MATRIX) : aucune couture entre
+	# blocs ni entre chunks.
+	st.set_uv(uv)
 	st.add_vertex(v)
 
 func _column_bottom(wx: int, wz: int, h: int) -> int:
