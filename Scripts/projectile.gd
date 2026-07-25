@@ -11,6 +11,8 @@ var target_group := "player"   # groupe blessé au contact
 var pass_group := "enemies"    # groupe traversé (le camp du tireur)
 var color := Color(0.7, 0.4, 0.95)
 var _life := 4.0
+var bullet_drop := 1
+var speed_y
 
 # À appeler AVANT add_child.
 func setup(dir: Vector3, speed: float, dmg: int, target := "player",
@@ -20,6 +22,7 @@ func setup(dir: Vector3, speed: float, dmg: int, target := "player",
 	target_group = target
 	color = col
 	pass_group = passes
+	speed_y = dir.normalized().dot(Vector3(0 , -1, 0)) * speed
 
 func _ready() -> void:
 	var cs := CollisionShape3D.new()
@@ -44,6 +47,8 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	global_position += velocity * delta
+	speed_y += bullet_drop * delta
+	global_position.y -= speed_y * delta
 	_life -= delta
 	if _life <= 0.0:
 		queue_free()

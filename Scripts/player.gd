@@ -220,17 +220,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		cam_pivot.rotation.y -= event.relative.x * mouse_sensitivity
 		_pitch = clamp(_pitch - event.relative.y * mouse_sensitivity, deg_to_rad(-70), deg_to_rad(50))
 		cam_pivot.rotation.x = _pitch
-	elif event is InputEventMouseButton and event.pressed and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		if event.button_index == MOUSE_BUTTON_LEFT:
-			_try_attack()
-		elif event.button_index == MOUSE_BUTTON_RIGHT:
+	elif event.is_action_pressed("Attack"):
+		_try_attack()
+	elif event.is_action_pressed("Special"):
 			_try_special()
 	elif event.is_action_pressed("Lantern"):
 		toggle_lantern()
 	elif event.is_action_pressed("Zoom in"):
-		_spring.spring_length = clampf(_spring.spring_length - ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
+		_spring.set_length(clampf(_spring.spring_length - ZOOM_STEP, ZOOM_MIN, ZOOM_MAX))
 	elif event.is_action_pressed("Zoom out"):
-		_spring.spring_length = clampf(_spring.spring_length + ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
+		_spring.set_length(clampf(_spring.spring_length + ZOOM_STEP, ZOOM_MIN, ZOOM_MAX))
 
 func _physics_process(delta: float) -> void:
 	_attack_timer = maxf(0.0, _attack_timer - delta)
