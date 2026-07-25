@@ -285,8 +285,8 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 min_value = 1.0
-max_value = 32.0
-value = 30.0
+max_value = 16.0
+value = 15.0
 
 [node name="DecoCheck" type="CheckButton" parent="Dim/Center/Frame/GraphicsPage" unique_id=1467220842]
 unique_name_in_owner = true

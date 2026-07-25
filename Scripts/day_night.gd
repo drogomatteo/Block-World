@@ -50,6 +50,7 @@ uniform vec3 cloud_light : source_color = vec3(1.0, 1.0, 1.0);
 uniform vec3 cloud_shade : source_color = vec3(0.68, 0.73, 0.84);
 uniform float cloud_coverage : hint_range(0.0, 1.0) = 0.45;
 uniform float night : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 fog_color : source_color = vec3(0.80, 0.85, 0.92);
 
 // Hash "sans sinus" (Dave Hoskins) : stable sur GPU, contrairement au
 // classique fract(sin(...)*43758.) qui produit des artefacts en grille.
@@ -111,7 +112,12 @@ void sky() {
 		vec3 ccol = mix(cloud_shade, cloud_light, clamp(shade + 0.3, 0.0, 1.0));
 		col = mix(col, ccol, cl * 0.9);
 	}
-	COLOR = col;
+	// Bande de brume à l'horizon : le depth fog ne teinte que la GÉOMÉTRIE —
+	// au-delà du dernier chunk il n'y a que le ciel, et le bord du monde se
+	// découpait dessus. Ici le ciel lui-même devient couleur de brume sous
+	// l'horizon (et en fondu juste au-dessus) : le mur de brume se prolonge
+	// sans couture là où il n'y a plus de terrain.
+	COLOR = mix(col, fog_color, 1.0 - smoothstep(0.02, 0.18, dir.y));
 }
 """
 
@@ -166,10 +172,16 @@ func _apply() -> void:
 		sun.light_energy = lerpf(0.30, 1.25, day)
 		sun.light_color = MOON.lerp(SUN_DAY.lerp(SUN_LOW, glow), day)
 
+	# Couleur de brume du moment : partagée par le fog de l'environnement et par
+	# la bande d'horizon du shader de ciel (les deux doivent coïncider, sinon le
+	# bord du monde se découpe sur le ciel).
+	var fog_col := FOG_NIGHT.lerp(FOG_DAY, day).lerp(HORIZON_GLOW, glow * 0.35)
+
 	if _sky_mat != null:
 		_sky_mat.set_shader_parameter("top_color", SKY_TOP_NIGHT.lerp(SKY_TOP_DAY, day))
 		var horizon := HORIZON_NIGHT.lerp(HORIZON_DAY, day).lerp(HORIZON_GLOW, glow * 0.8)
 		_sky_mat.set_shader_parameter("horizon_color", horizon)
+		_sky_mat.set_shader_parameter("fog_color", fog_col)
 		_sky_mat.set_shader_parameter("ground_color", GROUND_NIGHT.lerp(GROUND_DAY, day))
 		_sky_mat.set_shader_parameter("cloud_light",
 			CLOUD_NIGHT.lerp(CLOUD_DAY.lerp(HORIZON_GLOW, glow * 0.6), day))
@@ -185,12 +197,14 @@ func _apply() -> void:
 			environment.fog_sky_affect = 1.0 # le ciel aussi est voilé vu de sous l'eau
 			environment.ambient_light_color = AMBIENT_NIGHT.lerp(AMBIENT_DAY, day) * UNDERWATER_AMBIENT_TINT
 		else:
-			# En surface : mur de brume en profondeur, opaque pile à la limite
-			# des chunks (fog_end), transparent avant — l'air reste clair.
+			# En surface : mur de brume en profondeur, TOTALEMENT opaque avant
+			# la limite des chunks (0.92 × fog_end — à 1.02 le dernier anneau
+			# n'était embrumé qu'à ~96 % et on voyait les chunks se charger).
+			# Tout le chargement/déchargement se passe derrière ce rideau.
 			environment.fog_mode = Environment.FOG_MODE_DEPTH
-			environment.fog_depth_begin = fog_end * 0.45
-			environment.fog_depth_end = fog_end * 1.02
-			environment.fog_light_color = FOG_NIGHT.lerp(FOG_DAY, day).lerp(HORIZON_GLOW, glow * 0.35)
+			environment.fog_depth_begin = fog_end * 0.35
+			environment.fog_depth_end = fog_end * 0.92
+			environment.fog_light_color = fog_col
 			environment.fog_density = _base_fog_density # sans effet en depth (gardé pour les tests)
 			environment.fog_sky_affect = _base_fog_sky_affect
 			environment.ambient_light_color = AMBIENT_NIGHT.lerp(AMBIENT_DAY, day)

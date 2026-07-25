@@ -69,9 +69,9 @@ void fragment() {
 # Au-delà de cette distance, un ennemi est recyclé (despawn).
 const ENEMY_DESPAWN_DIST := 50.0
 
-@export var render_distance: int = 30    # rayon de chunks chargés autour du joueur
-										 # (chunks de 9.6 m : ~288 m de vue)
-@export var chunk_build_per_frame: int = 6
+@export var render_distance: int = 15    # rayon de chunks chargés autour du joueur
+										 # (chunks de 19.2 m : ~288 m de vue)
+@export var chunk_build_per_frame: int = 3 # chunks 32² : chacun vaut 4 anciens
 @export var max_enemies: int = 6
 @export var enemy_spawn_interval: float = 4.0
 @export var day_length: float = 900.0    # durée du cycle jour/nuit (secondes)
@@ -81,7 +81,15 @@ var player: Player
 var chunk_size: int
 var loaded_chunks := {}                   # Vector2i -> Chunk
 var build_queue: Array = []               # Vector2i en attente de construction
+var lod_queue: Array = []                 # Vector2i en attente de changement de détail
 var current_center := Vector2i(99999, 99999)
+# Rayons de détail, en chunks (distance de Chebyshev au chunk du joueur, comme
+# les anneaux carrés du streaming), calculés dans _ready. La mémoire suit la
+# distance : collision seulement là où la physique peut agir, maillages fins
+# des arbres seulement là où leurs LOD les affichent.
+var _collision_radius := 7
+var _tree_full_radius := 14
+var _tree_mid_radius := 24
 var _enemy_timer := 0.0
 var _hud: CanvasLayer
 var _hp_bar: ProgressBar
@@ -103,6 +111,12 @@ var _spawn_pos := Vector3.ZERO      # point d'apparition (terre ferme la plus pr
 
 func _ready() -> void:
 	chunk_size = Chunk.SIZE
+	# +1 de marge : l'anneau est mesuré d'origine de chunk à origine de chunk,
+	# le point le plus proche d'un chunk de l'anneau k est à (k-1) chunks.
+	var w := float(chunk_size) * Chunk.CUBE
+	_collision_radius = ceili(ENEMY_DESPAWN_DIST / w) + 1
+	_tree_full_radius = ceili(TreeGen.LOD1_DIST / w) + 1
+	_tree_mid_radius = ceili(TreeGen.LOD2_DIST / w) + 1
 
 	_make_hud()
 	_make_underwater_overlay()
@@ -139,10 +153,12 @@ func start_session(character: Dictionary, seed_value: int) -> void:
 	_make_day_night()
 	# Le biome océan peut couvrir l'origine : on apparaît sur la terre ferme
 	# la plus proche. Puis on construit tout de suite le chunk de spawn,
-	# sinon le joueur tombe dans le vide.
+	# sinon le joueur tombe dans le vide. current_center est posé AVANT : son
+	# anneau (0) donne au chunk de spawn collision et arbres pleins détails.
 	_spawn_pos = _find_spawn_pos()
 	var w := chunk_size * Chunk.CUBE
-	_build_chunk(Vector2i(floori(_spawn_pos.x / w), floori(_spawn_pos.z / w)))
+	current_center = Vector2i(floori(_spawn_pos.x / w), floori(_spawn_pos.z / w))
+	_build_chunk(current_center)
 
 	# Une scène par classe (class_id préréglé dedans).
 	var id: String = character.get("class_id", "warrior")
@@ -208,11 +224,11 @@ func _notification(what: int) -> void:
 		save_progress()
 
 func set_render_distance(v: int) -> void:
-	render_distance = clampi(v, 1, 32)
+	render_distance = clampi(v, 1, 16)
 	# Le mur de brume (depth fog) suit la limite des chunks : on ne voit
 	# jamais les chunks apparaître/disparaître au bord.
 	if _day_night != null:
-		_day_night.fog_end = _view_dist_m()
+		_day_night.fog_end = view_dist_m()
 	# La distance des décos est relative : recaler les chunks déjà chargés.
 	for key in loaded_chunks:
 		var c: Chunk = loaded_chunks[key]
@@ -272,12 +288,28 @@ func _player_chunk() -> Vector2i:
 		floori(player.global_position.x / w),
 		floori(player.global_position.z / w))
 
-# Un chunk (donc son collider de terrain) est-il chargé sous cette position ?
-# Filet anti-chute des ennemis : hors de la zone chargée, il n'y a AUCUNE
-# collision — ils se rabattent alors sur le sol analytique du générateur.
+# Un chunk AVEC COLLISION est-il chargé sous cette position ? Filet anti-chute
+# des ennemis : là où il n'y a aucun collider (zone non chargée, mais aussi
+# chunk lointain dont la collision n'est pas construite), ils se rabattent sur
+# le sol analytique du générateur.
 func has_chunk_at(pos: Vector3) -> bool:
 	var w := chunk_size * Chunk.CUBE
-	return loaded_chunks.has(Vector2i(floori(pos.x / w), floori(pos.z / w)))
+	var key := Vector2i(floori(pos.x / w), floori(pos.z / w))
+	return loaded_chunks.has(key) and (loaded_chunks[key] as Chunk).collision_on
+
+# Distance au chunk du joueur, en chunks (Chebyshev : anneaux carrés, comme la
+# zone de streaming elle-même).
+func _chunk_ring(key: Vector2i) -> int:
+	return maxi(absi(key.x - current_center.x), absi(key.y - current_center.y))
+
+# Niveau de détail des arbres selon l'anneau : 0 = plein détail (le maillage
+# fin n'est visible que sous TreeGen.LOD1_DIST), 1 = LOD1+LOD2, 2 = LOD2 seul.
+func _desired_tree_detail(ring: int) -> int:
+	if ring <= _tree_full_radius:
+		return 0
+	if ring <= _tree_mid_radius:
+		return 1
+	return 2
 
 func _refresh_chunk_list() -> void:
 	var needed := {}
@@ -292,6 +324,20 @@ func _refresh_chunk_list() -> void:
 		if not needed.has(key):
 			loaded_chunks[key].queue_free()
 			loaded_chunks.erase(key)
+	# Détail à la demande : les chunks dont l'anneau a changé de catégorie
+	# (collision, niveau d'arbres) sont re-détaillés petit à petit via la file.
+	lod_queue.clear()
+	for key in loaded_chunks:
+		var c: Chunk = loaded_chunks[key]
+		var ring := _chunk_ring(key)
+		if c.tree_detail != _desired_tree_detail(ring) \
+				or c.collision_on != (ring <= _collision_radius):
+			lod_queue.append(key)
+	lod_queue.sort_custom(_closer_to_center)
+	# Le chunk SOUS le joueur récupère sa collision IMMÉDIATEMENT (pas via la
+	# file budgetée) : jamais une frame de sol ouvert après une téléportation.
+	if loaded_chunks.has(current_center):
+		(loaded_chunks[current_center] as Chunk).set_lod(0, true)
 	# Nettoie la file et priorise les chunks les plus proches.
 	build_queue = build_queue.filter(func(k): return needed.has(k))
 	build_queue.sort_custom(_closer_to_center)
@@ -307,6 +353,16 @@ func _process_build_queue() -> void:
 			continue
 		_build_chunk(key)
 		budget -= 1
+	# Le budget restant sert aux changements de détail (collision et arbres à
+	# la demande) : moins urgent que les chunks manquants. L'anneau est relu au
+	# moment du traitement — le joueur a pu bouger depuis la mise en file.
+	while budget > 0 and not lod_queue.is_empty():
+		var key: Vector2i = lod_queue.pop_front()
+		if not loaded_chunks.has(key):
+			continue
+		var ring := _chunk_ring(key)
+		(loaded_chunks[key] as Chunk).set_lod(_desired_tree_detail(ring), ring <= _collision_radius)
+		budget -= 1
 
 func _build_chunk(key: Vector2i) -> void:
 	if loaded_chunks.has(key):
@@ -319,6 +375,11 @@ func _build_chunk(key: Vector2i) -> void:
 	c.deco_view_dist = _deco_view_dist()
 	c.deco_visible = _deco_on
 	c.tree_shadows_visible = not _shadows_on
+	# Détail selon la distance : la collision et les maillages fins des arbres
+	# n'existent que près du joueur (la mémoire suit, voir chunk.gd).
+	var ring := _chunk_ring(key)
+	c.tree_detail = _desired_tree_detail(ring)
+	c.collision_on = ring <= _collision_radius
 	c.position = Vector3(key.x * chunk_size, 0, key.y * chunk_size) * Chunk.CUBE
 	add_child(c)
 	c.build()
@@ -326,14 +387,15 @@ func _build_chunk(key: Vector2i) -> void:
 
 # ---------- Réglages graphiques (appelés par OptionsMenu) ----------
 
-# Distance de rendu en mètres (rayon de chunks -> emprise monde).
-func _view_dist_m() -> float:
+# Distance de rendu en mètres (rayon de chunks -> emprise monde). Publique :
+# les ennemis s'en servent pour se masquer hors du rayon d'affichage.
+func view_dist_m() -> float:
 	return float(render_distance) * float(chunk_size) * Chunk.CUBE
 
 # Les petites décos disparaissent à la moitié de la distance d'affichage :
 # RELATIF au réglage, avec un plancher pour rester visibles de près.
 func _deco_view_dist() -> float:
-	return maxf(_view_dist_m() * 0.5, 20.0)
+	return maxf(view_dist_m() * 0.5, 20.0)
 
 # Ombres réelles on/off. Quand elles sont coupées, les ombres RONDES des
 # arbres prennent le relais (celles des entités sont toujours affichées).
@@ -427,7 +489,7 @@ func _make_day_night() -> void:
 	_day_night.sun = $DirectionalLight3D
 	_day_night.environment = ($WorldEnvironment as WorldEnvironment).environment
 	_day_night.day_length = day_length
-	_day_night.fog_end = _view_dist_m() # mur de brume au bord des chunks
+	_day_night.fog_end = view_dist_m() # mur de brume au bord des chunks
 	add_child(_day_night)
 
 # Teinte bleutée plein écran affichée quand la caméra est sous l'eau.

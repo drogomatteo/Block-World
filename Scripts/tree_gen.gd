@@ -54,14 +54,19 @@ var _blob_max := {}
 # Le matériau est le même pour tous les arbres du monde : créé une seule fois.
 static var _mat: StandardMaterial3D
 
+# detail limite les maillages construits (mémoire à la demande, piloté par la
+# distance au joueur via chunk.gd) : 0 = les trois paliers, 1 = LOD1+LOD2 seuls,
+# 2 = LOD2 seul. with_body saute la collision (inutile loin du joueur).
+# La CROISSANCE est identique quel que soit detail : se rapprocher reconstruit
+# exactement le même arbre, avec plus de maillages.
 static func build(world_seed: int, wx: int, wz: int, snowy := false,
-		ground := Callable()) -> Node3D:
+		ground := Callable(), detail := 0, with_body := true) -> Node3D:
 	var g := TreeGen.new()
 	g._rng.seed = hash(Vector3i(world_seed, wx, wz)) # unique par arbre, déterministe
 	g._snowy = snowy
 	g._pick_palette()
 	g._grow(ground)
-	return g._assemble()
+	return g._assemble(detail, with_body)
 
 # ---------- Croissance ----------
 
@@ -226,29 +231,37 @@ func _hash01(v: Vector3i) -> float:
 
 # ---------- Construction du nœud ----------
 
-func _assemble() -> Node3D:
+func _assemble(detail := 0, with_body := true) -> Node3D:
 	var tree := Node3D.new()
 	tree.name = "Tree"
 	tree.set_meta("cube_count", _voxels.size()) # lu par le smoke test
-	var blocks := _build_blocks()
-	blocks.visibility_range_end = LOD1_DIST
-	blocks.visibility_range_end_margin = LOD_HYST
-	tree.add_child(blocks)
-	var lod1 := _build_blocks_lod(LOD1_FACTOR, "BlocksLOD1")
-	lod1.visibility_range_begin = LOD1_DIST
-	lod1.visibility_range_begin_margin = LOD_HYST
-	lod1.visibility_range_end = LOD2_DIST
-	lod1.visibility_range_end_margin = LOD_HYST
-	# Le palier de transition PROJETTE son ombre (défaut) : sans elle, l'arbre
-	# devenait « transparent » à la lumière dès 120 m alors que les ombres du
-	# soleil portent à 180 m.
-	tree.add_child(lod1)
+	if detail <= 0:
+		var blocks := _build_blocks()
+		blocks.visibility_range_end = LOD1_DIST
+		blocks.visibility_range_end_margin = LOD_HYST
+		tree.add_child(blocks)
+	if detail <= 1:
+		var lod1 := _build_blocks_lod(LOD1_FACTOR, "BlocksLOD1")
+		if detail <= 0:
+			# Palier fin présent : le LOD1 ne prend le relais qu'à sa distance.
+			lod1.visibility_range_begin = LOD1_DIST
+			lod1.visibility_range_begin_margin = LOD_HYST
+		lod1.visibility_range_end = LOD2_DIST
+		lod1.visibility_range_end_margin = LOD_HYST
+		# Le palier de transition PROJETTE son ombre (défaut) : sans elle, l'arbre
+		# devenait « transparent » à la lumière dès 120 m alors que les ombres du
+		# soleil portent à 180 m.
+		tree.add_child(lod1)
 	var lod2 := _build_blocks_lod(LOD2_FACTOR, "BlocksLOD2")
-	lod2.visibility_range_begin = LOD2_DIST
-	lod2.visibility_range_begin_margin = LOD_HYST
+	if detail <= 1:
+		# Palier précédent présent : le LOD2 n'apparaît qu'au loin. À detail 2,
+		# c'est le SEUL maillage : visible à toute distance.
+		lod2.visibility_range_begin = LOD2_DIST
+		lod2.visibility_range_begin_margin = LOD_HYST
 	lod2.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	tree.add_child(lod2)
-	tree.add_child(_build_body())
+	if with_body:
+		tree.add_child(_build_body())
 	return tree
 
 static func _material() -> StandardMaterial3D:
@@ -272,6 +285,7 @@ func _build_blocks() -> MeshInstance3D:
 				Vector3i(0, -1, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]:
 			if not _voxels.has(key + d):
 				_emit_face(st, key, d)
+	st.index() # fusionne les sommets répétés des quads (6 -> 4 par face)
 	var mi := MeshInstance3D.new()
 	mi.name = "Blocks"
 	mi.mesh = st.commit()
@@ -312,6 +326,7 @@ func _build_blocks_lod(factor: int, node_name: String) -> MeshInstance3D:
 				Vector3i(0, -1, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]:
 			if not cells.has(ck + d):
 				_emit_lod_face(st, ck, d, avg, factor)
+	st.index() # fusionne les sommets répétés des quads (6 -> 4 par face)
 	var mi := MeshInstance3D.new()
 	mi.name = node_name
 	mi.mesh = st.commit()

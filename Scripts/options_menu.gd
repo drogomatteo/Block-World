@@ -35,8 +35,9 @@ var settings := {
 	"fps_index": 0,        # index dans FPS_OPTIONS
 	"mouse_sens": 0.005,
 	"volume": 1.0,
-	"render_distance": 30,
+	"render_distance": 15,
 	"render_dist_x3": false, # migration du 2026-07-24 (distance triplée), une fois
+	"chunks_x2": false,      # migration du 2026-07-25 (chunks 16 -> 32), une fois
 	"decorations": true,   # herbe, fleurs, cailloux... posés sur le sol
 }
 
@@ -72,6 +73,13 @@ func _load_settings() -> void:
 	if not bool(settings["render_dist_x3"]):
 		settings["render_distance"] = maxi(int(settings["render_distance"]), 30)
 		settings["render_dist_x3"] = true
+		_save_settings()
+	# Migration (2026-07-25) : chunks passés de 16 à 32 cubes de côté — la même
+	# valeur donnerait une vue DOUBLE. On divise par 2 une fois : même distance
+	# monde qu'avant, avec 4× moins de chunks (nœuds/objets dessinés).
+	if not bool(settings["chunks_x2"]):
+		settings["render_distance"] = clampi(roundi(int(settings["render_distance"]) / 2.0), 1, 16)
+		settings["chunks_x2"] = true
 		_save_settings()
 
 func _save_settings() -> void:

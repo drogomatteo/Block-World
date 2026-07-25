@@ -3,11 +3,20 @@ extends Node3D
 
 # Un chunk = une portion carrée SIZE x SIZE colonnes du monde.
 # Rendu   : UN SEUL MultiMeshInstance3D (donc 1 draw call pour tous les cubes).
-# Collision: UN SEUL collider trimesh (dessus + faces de falaise exposées).
+# Collision: UN SEUL collider trimesh (dessus + faces de falaise exposées),
+# construit UNIQUEMENT près du joueur (collision_on, piloté par world.gd) : la
+# physique ne sert à rien à 200 m et le trimesh cuit par Jolt coûte cher en RAM.
+# Même logique pour les arbres (tree_detail) : loin, seuls les maillages
+# grossiers existent — la génération étant déterministe, se rapprocher
+# reconstruit exactement le même arbre en plein détail.
 # Les instances/faces sont en coordonnées LOCALES ; le nœud Chunk est placé
 # à la position monde (cx*SIZE*CUBE, 0, cz*SIZE*CUBE) par world.gd.
 
-const SIZE := 16
+# 32 (doublé le 2026-07-25) : à couverture égale en mètres, 4× moins de chunks
+# donc 4× moins de nœuds/objets dessinés (chaque chunk porte ~5-7 nœuds fixes :
+# MultiMesh terrain, eau, décos, ombres d'arbres...). La distance de rendu par
+# défaut a été divisée par 2 en face (même vue monde qu'avant).
+const SIZE := 32
 # Taille MONDE d'un cube : le TIERS de la taille du joueur (capsule 1.8 m).
 # TerrainGen travaille en indices de cube ; tout ce qui parle en mètres passe par CUBE.
 const CUBE := 0.6
@@ -21,13 +30,37 @@ var deco_visible := true     # option « décorations au sol »
 var tree_shadows_visible := false # ombres rondes sous les arbres (ombres OFF)
 var deco_mmi: MultiMeshInstance3D        # relu par world.gd (toggles à chaud)
 var tree_shadow_mmi: MultiMeshInstance3D
+var tree_detail := 0        # 0 = plein détail, 1 = LOD1+LOD2, 2 = LOD2 seul
+var collision_on := true    # collider terrain + corps des arbres (près du joueur)
+var _terrain_body: StaticBody3D
+var _tree_sites: Array[Vector3i] = []    # (lx, hauteur, lz) des arbres du chunk
+var _tree_nodes: Array[Node3D] = []
 
 func build() -> void:
 	_build_visual()
-	_build_collision()
+	_scan_tree_sites()
 	_build_trees()
+	_build_tree_shadows()
 	_build_deco()
 	_build_water()
+	if collision_on:
+		_build_collision()
+
+# Adapte le chunk à sa distance au joueur (appelé par world.gd via sa file de
+# détail) : la collision apparaît/disparaît, les arbres sont reconstruits au
+# niveau de détail voulu (déterministe : mêmes arbres, maillages en moins).
+func set_lod(detail: int, coll: bool) -> void:
+	var trees_dirty := detail != tree_detail or coll != collision_on
+	if coll != collision_on:
+		collision_on = coll
+		if coll:
+			_build_collision()
+		elif _terrain_body != null:
+			_terrain_body.queue_free()
+			_terrain_body = null
+	tree_detail = detail
+	if trees_dirty:
+		_build_trees()
 
 func _build_visual() -> void:
 	var box := BoxMesh.new()
@@ -96,44 +129,62 @@ func _build_collision() -> void:
 
 	var cs := CollisionShape3D.new()
 	cs.shape = shape
-	var body := StaticBody3D.new()
-	body.add_child(cs)
-	add_child(body)
+	_terrain_body = StaticBody3D.new()
+	_terrain_body.add_child(cs)
+	add_child(_terrain_body)
 
-func _build_trees() -> void:
-	var shadow_pos: Array[Vector3] = []
+# Repère une fois pour toutes les arbres du chunk : les reconstructions au fil
+# des changements de détail repartent de cette liste sans re-balayer les
+# 256 colonnes ni resonder le bruit.
+func _scan_tree_sites() -> void:
 	for lx in SIZE:
 		for lz in SIZE:
 			var wx := cx * SIZE + lx
 			var wz := cz * SIZE + lz
 			if gen.has_tree(wx, wz):
-				var h := gen.get_height(wx, wz)
-				# Arbre 100 % procédural (TreeGen) : construit cube par cube avec
-				# une graine dérivée du seed et de la position — chaque arbre du
-				# monde est unique, mais le même monde redonne les mêmes arbres.
-				# Ses cubes font CUBE et tombent pile sur la grille du monde ; le
-				# callable donne à TreeGen le relief autour du pied (racines qui
-				# descendent en aval, cubes enterrés retirés en amont : jamais un
-				# cube d'arbre sur un cube de terrain).
-				var t := TreeGen.build(gen.world_seed, wx, wz,
-					gen.get_biome(wx, wz) == TerrainGen.Biome.SNOW,
-					func(dx: int, dz: int) -> int:
-						return gen.get_height(wx + dx, wz + dz) - h)
-				add_child(t)
-				t.position = Vector3(lx * CUBE, (float(h) + 0.5) * CUBE, lz * CUBE)
-				shadow_pos.append(t.position + Vector3(0, 0.04, 0))
-	if shadow_pos.is_empty():
+				_tree_sites.append(Vector3i(lx, gen.get_height(wx, wz), lz))
+
+# (Re)construit les arbres au niveau de détail courant. Arbre 100 % procédural
+# (TreeGen) : construit cube par cube avec une graine dérivée du seed et de la
+# position — chaque arbre du monde est unique, mais le même monde (et la même
+# reconstruction) redonne exactement les mêmes arbres. Ses cubes font CUBE et
+# tombent pile sur la grille du monde ; le callable donne à TreeGen le relief
+# autour du pied (racines qui descendent en aval, cubes enterrés retirés en
+# amont : jamais un cube d'arbre sur un cube de terrain). Loin du joueur, seuls
+# les maillages grossiers sont générés (VRAM) et la collision est sautée (RAM).
+func _build_trees() -> void:
+	for t in _tree_nodes:
+		t.queue_free()
+	_tree_nodes.clear()
+	for s in _tree_sites:
+		var wx := cx * SIZE + s.x
+		var wz := cz * SIZE + s.z
+		var h := s.y
+		var t := TreeGen.build(gen.world_seed, wx, wz,
+			gen.get_biome(wx, wz) == TerrainGen.Biome.SNOW,
+			func(dx: int, dz: int) -> int:
+				return gen.get_height(wx + dx, wz + dz) - h,
+			tree_detail, collision_on)
+		add_child(t)
+		t.position = Vector3(s.x * CUBE, (float(h) + 0.5) * CUBE, s.z * CUBE)
+		_tree_nodes.append(t)
+
+# Ombres rondes sous les troncs : un seul MultiMesh par chunk, affiché
+# uniquement quand les vraies ombres sont désactivées (sinon elles se
+# cumuleraient avec l'ombre portée du soleil). Indépendant du niveau de
+# détail : construit une seule fois.
+func _build_tree_shadows() -> void:
+	if _tree_sites.is_empty():
 		return
-	# Ombres rondes sous les troncs : un seul MultiMesh par chunk, affiché
-	# uniquement quand les vraies ombres sont désactivées (sinon elles se
-	# cumuleraient avec l'ombre portée du soleil).
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	# Rayon 4 m : de l'ordre du rayon des canopées procédurales (~3-4.5 m).
 	mm.mesh = FX.blob_shadow_mesh(4.0)
-	mm.instance_count = shadow_pos.size()
-	for i in shadow_pos.size():
-		mm.set_instance_transform(i, Transform3D(Basis(), shadow_pos[i]))
+	mm.instance_count = _tree_sites.size()
+	for i in _tree_sites.size():
+		var s := _tree_sites[i]
+		mm.set_instance_transform(i, Transform3D(Basis(),
+			Vector3(s.x * CUBE, (float(s.y) + 0.5) * CUBE + 0.04, s.z * CUBE)))
 	tree_shadow_mmi = MultiMeshInstance3D.new()
 	tree_shadow_mmi.multimesh = mm
 	tree_shadow_mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -220,6 +271,7 @@ func _build_water() -> void:
 	if not any:
 		return
 	st.generate_tangents() # requis par le NORMAL_MAP du shader d'eau
+	st.index() # fusionne les sommets répétés des quads (6 -> 4 par bloc)
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
 	mi.material_override = water_material

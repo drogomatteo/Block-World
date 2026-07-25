@@ -153,10 +153,10 @@ func _run() -> void:
 	world._enemy_timer = 1e9
 	for e in world.get_tree().get_nodes_in_group("enemies"):
 		e.queue_free()
-	# Distance de rendu réduite pour le test : la valeur de jeu (30 chunks =
-	# 3721 chunks chargés) prendrait de longues minutes en headless. Toutes les
+	# Distance de rendu réduite pour le test : la valeur de jeu (15 chunks de
+	# 32² = 961 chunks) prendrait de longues minutes en headless. Toutes les
 	# vérifications (comptes de chunks, brume) sont relatives à cette valeur.
-	world.set_render_distance(6)
+	world.set_render_distance(3)
 
 	# --- Génération : cubes, océan, seuil de l'eau ---
 	var gen: TerrainGen = world.gen
@@ -618,8 +618,14 @@ func _run() -> void:
 	world._day_night._apply()
 	var envf: Environment = world.get_node("WorldEnvironment").environment
 	check(envf.fog_mode == Environment.FOG_MODE_DEPTH \
-			and absf(envf.fog_depth_end - world._view_dist_m() * 1.02) < 1.0,
-		"mur de brume calé sur la limite des chunks (opaque à %.0f m)" % envf.fog_depth_end)
+			and absf(envf.fog_depth_end - world.view_dist_m() * 0.92) < 1.0 \
+			and envf.fog_depth_begin < envf.fog_depth_end,
+		"mur de brume totalement opaque AVANT la limite des chunks (à %.0f m)" % envf.fog_depth_end)
+	# Le ciel porte la couleur de la brume à l'horizon : le depth fog ne teinte
+	# que la géométrie, sans ça le bord du monde se découpait sur le ciel.
+	var sky_fog = (envf.sky.sky_material as ShaderMaterial).get_shader_parameter("fog_color")
+	check(sky_fog is Color and (sky_fog as Color).is_equal_approx(envf.fog_light_color),
+		"bande de brume à l'horizon du ciel, couleur identique au fog")
 	check(player._blob != null, "ombre ronde sous le joueur")
 	check(player.camera.v_offset > 0.0, "caméra décalée : le crosshair flotte au-dessus du joueur")
 	var zl0: float = player._spring.spring_length
@@ -662,6 +668,61 @@ func _run() -> void:
 		check(lod1_v < full_v and lod2_v * 3 < full_v and lod2_v < lod1_v,
 			"LOD de plus en plus légers (%d > %d > %d sommets)" % [full_v, lod1_v, lod2_v])
 	lod_tree.free()
+
+	# --- Mémoire à la demande : collision et détail des arbres suivent la distance ---
+	# Un arbre lointain ne construit QUE le maillage grossier, sans collision ;
+	# un intermédiaire garde LOD1+LOD2. La croissance étant déterministe, se
+	# rapprocher reconstruit exactement le même arbre en plein détail.
+	var far_tree := TreeGen.build(12345, 40, 40, false, Callable(), 2, false)
+	check(far_tree.get_node_or_null("Blocks") == null \
+			and far_tree.get_node_or_null("BlocksLOD1") == null \
+			and far_tree.get_node_or_null("Body") == null \
+			and far_tree.get_node_or_null("BlocksLOD2") != null,
+		"arbre lointain : maillage grossier seul, sans collision ni paliers fins")
+	check((far_tree.get_node("BlocksLOD2") as MeshInstance3D).visibility_range_begin == 0.0,
+		"arbre lointain : le maillage grossier s'affiche à toute distance")
+	far_tree.free()
+	var mid_tree := TreeGen.build(12345, 40, 40, false, Callable(), 1, false)
+	check(mid_tree.get_node_or_null("Blocks") == null \
+			and mid_tree.get_node_or_null("BlocksLOD1") != null \
+			and (mid_tree.get_node("BlocksLOD1") as MeshInstance3D).visibility_range_begin == 0.0,
+		"arbre intermédiaire : LOD1+LOD2 sans le plein détail")
+	mid_tree.free()
+	check(world._collision_radius >= ceili(50.0 / (Chunk.SIZE * Chunk.CUBE)) \
+			and world._tree_full_radius * Chunk.SIZE * Chunk.CUBE >= TreeGen.LOD1_DIST \
+			and world._tree_mid_radius > world._tree_full_radius,
+		"rayons de détail cohérents (collision %d, arbres fins %d, moyens %d chunks)"
+		% [world._collision_radius, world._tree_full_radius, world._tree_mid_radius])
+	var center_chunk: Chunk = world.loaded_chunks[world.current_center]
+	check(center_chunk.collision_on and center_chunk._terrain_body != null,
+		"le chunk sous le joueur porte sa collision de terrain")
+	# Bascule aller-retour d'un chunk arboré chargé : set_lod(2, false) libère
+	# collider + maillages fins, set_lod(0, true) reconstruit tout à l'identique.
+	var lod_chunk: Chunk = null
+	for key in world.loaded_chunks:
+		if key != world.current_center and not world.loaded_chunks[key]._tree_sites.is_empty():
+			lod_chunk = world.loaded_chunks[key]
+			break
+	check(lod_chunk != null, "un chunk arboré (hors chunk du joueur) est chargé")
+	if lod_chunk != null:
+		var over := Vector3((float(lod_chunk.cx) + 0.5) * Chunk.SIZE * Chunk.CUBE, 0.0,
+			(float(lod_chunk.cz) + 0.5) * Chunk.SIZE * Chunk.CUBE)
+		var cubes_before := int(lod_chunk._tree_nodes[0].get_meta("cube_count", -1))
+		lod_chunk.set_lod(2, false)
+		check(lod_chunk._terrain_body == null, "chunk lointain : collider de terrain libéré")
+		check(not world.has_chunk_at(over),
+			"has_chunk_at : un chunk sans collision ne compte pas (sol analytique)")
+		var demoted: Node3D = lod_chunk._tree_nodes[0]
+		check(demoted.get_node_or_null("Blocks") == null and demoted.get_node_or_null("Body") == null,
+			"chunk lointain : arbres réduits au maillage grossier, sans collision")
+		lod_chunk.set_lod(0, true)
+		check(lod_chunk._terrain_body != null and world.has_chunk_at(over),
+			"retour près du joueur : collider de terrain reconstruit")
+		var promoted: Node3D = lod_chunk._tree_nodes[0]
+		check(promoted.get_node_or_null("Blocks") != null and promoted.get_node_or_null("Body") != null,
+			"retour près du joueur : arbres pleins détails + collision reconstruits")
+		check(int(promoted.get_meta("cube_count", -2)) == cubes_before,
+			"reconstruction déterministe : le même arbre revient (%d cubes)" % cubes_before)
 
 	# --- Nage (dans l'océan trouvé plus haut) ---
 	# TerrainGen est en unités cube : conversions monde via Chunk.CUBE.
@@ -935,6 +996,14 @@ func _run() -> void:
 		check(scout.global_position.y >= cur_gy - 0.05,
 			"ennemi retenu par le sol analytique (y %.2f ≥ terrain %.2f, aucun collider)"
 			% [scout.global_position.y, cur_gy])
+		# Hors du rayon d'affichage : masqué mais TOUJOURS SIMULÉ (position, IA).
+		check(not scout.visible and scout.global_position.distance_to(player.global_position) > world.view_dist_m(),
+			"ennemi hors du rayon d'affichage : masqué (mais simulé)")
+		scout.global_position = player.global_position + Vector3(3, 1, 0)
+		scout.velocity = Vector3.ZERO
+		for i in 5:
+			await physics_frame
+		check(scout.visible, "ennemi revenu dans le rayon d'affichage : réaffiché")
 
 	# --- Arbres 100 % procéduraux (Scripts/tree_gen.gd) ---
 	var tree := TreeGen.build(12345, 100, 100)
@@ -944,8 +1013,9 @@ func _run() -> void:
 	var tarrays := tmesh.surface_get_arrays(0)
 	var tverts: PackedVector3Array = tarrays[Mesh.ARRAY_VERTEX]
 	var tcols: PackedColorArray = tarrays[Mesh.ARRAY_COLOR]
-	check(tverts.size() > 800 and tcols.size() == tverts.size(),
-		"arbre : maillage voxel coloré (%d sommets)" % tverts.size())
+	# 500 : le maillage est INDEXÉ (4 sommets par face au lieu de 6).
+	check(tverts.size() > 500 and tcols.size() == tverts.size(),
+		"arbre : maillage voxel coloré et indexé (%d sommets)" % tverts.size())
 	# Chaque sommet est un COIN de cube : sur la demi-grille de CUBE. Cela
 	# vérifie à la fois la taille uniforme des cubes et l'alignement monde.
 	var misaligned := 0

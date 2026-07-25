@@ -165,6 +165,23 @@ func _physics_process(delta: float) -> void:
 	if player == null or not is_instance_valid(player):
 		player = get_tree().get_first_node_in_group("player")
 
+	# Hors du rayon d'affichage (limite des chunks/brume), l'ennemi n'est plus
+	# DESSINÉ ni animé — mais il continue de vivre : position, IA, physique.
+	# Il réapparaît en entrant dans le rayon. Hystérésis ±2 m anti-clignotement.
+	if player != null and is_instance_valid(player):
+		var wrld := get_parent()
+		if wrld != null and wrld.has_method("view_dist_m"):
+			var vd: float = wrld.view_dist_m()
+			var pdist := global_position.distance_to(player.global_position)
+			if visible and pdist > vd + 2.0:
+				visible = false
+				if _anim != null:
+					_anim.pause() # squelette figé : zéro coût d'animation caché
+			elif not visible and pdist < vd - 2.0:
+				visible = true
+				if _anim != null and _anim.current_animation != "":
+					_anim.play(_anim.current_animation)
+
 	var move := Vector3.ZERO
 	var speed := _speed
 	if player != null and is_instance_valid(player):
@@ -242,7 +259,8 @@ func _physics_process(delta: float) -> void:
 		velocity.y = JUMP_VELOCITY
 		_jump_timer = JUMP_COOLDOWN
 
-	_animate(delta, move, in_water)
+	if visible: # caché hors du rayon d'affichage : on n'anime pas dans le vide
+		_animate(delta, move, in_water)
 
 # Profondeur des pieds sous la surface (0 si la colonne n'a pas d'eau).
 # TerrainGen travaille en indices de cube : conversion via Chunk.CUBE.
