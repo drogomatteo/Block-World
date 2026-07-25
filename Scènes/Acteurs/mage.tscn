@@ -602,7 +602,7 @@ _data = {
 &"recoil": SubResource("Animation_oqof1")
 }
 
-[node name="Mage" type="CharacterBody3D" unique_id=1337520085]
+[node name="Mage" type="CharacterBody3D" unique_id=1337520085 groups=["player"]]
 script = ExtResource("1_c78cb")
 class_id = "mage"
 
@@ -697,7 +697,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
 mesh = SubResource("BoxMesh_ut7am")
 
 [node name="Weapon" type="Node3D" parent="Model/RollCenter/ArmR" unique_id=2027832067]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.03, -0.5, -0.1)
+transform = Transform3D(1, 0, 0, 0, -0.64278764, 0.76604444, 0, -0.76604444, -0.64278764, 0.03, -0.5, -0.1)
 
 [node name="Staff" type="MeshInstance3D" parent="Model/RollCenter/ArmR/Weapon" unique_id=345981927]
 mesh = SubResource("BoxMesh_flyue")

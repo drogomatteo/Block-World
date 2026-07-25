@@ -13,7 +13,7 @@ extends CharacterBody3D
 # qui limite leurs roulades (invincibles pendant la roulade, comme le joueur).
 # À la mort : lâche de l'XP (+ parfois un soin / un équipement).
 
-const PROJECTILE_SCENE := preload("res://Scènes/Objets/projectile.tscn")
+const ARROW_SCENE := preload("res://Scènes/Objets/Arrow.tscn")
 const PICKUP_SCENE := preload("res://Scènes/Objets/pickup.tscn")
 
 const AGGRO_RANGE := 18.0
@@ -21,7 +21,7 @@ const ATTACK_RANGE := 1.9
 const ATTACK_COOLDOWN := 1.1
 const RANGED_KEEP := 8.0
 const RANGED_COOLDOWN := 1.6
-const PROJECTILE_SPEED := 16.0
+const ARROW_SPEED := 16.0
 const JUMP_VELOCITY := 6.2
 const JUMP_COOLDOWN := 0.5
 const ROLL_SPEED := 8.5
@@ -359,15 +359,15 @@ func _try_shoot() -> void:
 	# Tir "en avance" : vise là où le joueur SERA, d'après sa vitesse actuelle.
 	var target: Vector3 = player.global_position + Vector3(0, 1.0, 0)
 	var pv: Vector3 = player.velocity if "velocity" in player else Vector3.ZERO
-	var flight_time := origin.distance_to(target) / PROJECTILE_SPEED
+	var flight_time := origin.distance_to(target) / ARROW_SPEED
 	target += Vector3(pv.x, 0.0, pv.z) * flight_time * 0.85
 	var dir := (target - origin).normalized()
 	# Recul du bras d'arc : clip du GearAnim.
 	if _gear_anim != null:
 		_gear_anim.stop()
 		_gear_anim.play("draw")
-	var p := PROJECTILE_SCENE.instantiate() as Projectile
-	p.setup(dir, PROJECTILE_SPEED, _damage, "player", Color(0.7, 0.4, 0.95), "enemies")
+	var p := ARROW_SCENE.instantiate() as Arrow
+	p.setup(dir, ARROW_SPEED, _damage, "player", "enemies")
 	get_parent().add_child(p)
 	p.global_position = origin + dir * 0.6
 

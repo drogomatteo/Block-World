@@ -8,7 +8,7 @@ extends CharacterBody3D
 # Ici on récupèhtre les nœuds, on pilote les AnimationPlayer (play/speed_scale)
 # et on applique les stats de CLASSES (class_id préréglé par la scène).
 
-const PROJECTILE_SCENE := preload("res://Scènes/Objets/projectile.tscn")
+const ARROW_SCENE := preload("res://Scènes/Objets/Arrow.tscn")
 
 const JUMP_VELOCITY := 6.5
 const AIM_RAY_LENGTH := 90.0 # portée du rayon de visée du réticule (tirs)
@@ -110,8 +110,7 @@ var move_speed := 6.0
 var special_cooldown := 5.0
 var special_timer := 0.0 # lu par world.gd pour la jauge du HUD
 var _ranged := false
-var _proj_speed := 20.0
-var _proj_color := Color.WHITE
+var _proj_speed := 40.0
 var _attack_timer := 0.0
 
 var level := 1
@@ -156,7 +155,6 @@ signal inventory_changed
 signal died
 
 func _ready() -> void:
-	add_to_group("player")
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 	var c: Dictionary = CLASSES.get(class_id, CLASSES["warrior"])
@@ -164,7 +162,6 @@ func _ready() -> void:
 	special_cooldown = c["special_cooldown"]
 	_ranged = c["ranged"]
 	_proj_speed = c.get("projectile_speed", 20.0)
-	_proj_color = c.get("projectile_color", Color.WHITE)
 	_recompute_stats()
 	health = max_health
 
@@ -456,7 +453,10 @@ func _swim_process(delta: float, depth: float) -> void:
 	var tilt := -1.25 if moving else -0.35
 	_roll_center.rotation.x = lerpf(wrapf(_roll_center.rotation.x, -PI, PI), tilt, 5.0 * delta)
 	model.scale.y = lerpf(model.scale.y, 1.0, 10.0 * delta) # plus d'accroupi en nage
-	_play_move("swim_move" if moving else "swim_idle", 4.5 if moving else 2.0)
+	if moving:
+		_play_move("swim_move", 2.25 if is_on_floor() else 4.5)
+	else:
+		_play_move("swim_idle", 1 if is_on_floor() else 2)
 
 	move_and_slide()
 
@@ -497,8 +497,8 @@ func _shoot(damage_mult: float, yaw_offset: float) -> void:
 	if yaw_offset != 0.0:
 		dir = dir.rotated(Vector3.UP, yaw_offset)
 	model.rotation.y = atan2(-dir.x, -dir.z) # le perso se tourne vers sa cible
-	var p := PROJECTILE_SCENE.instantiate() as Projectile
-	p.setup(dir, _proj_speed, int(round(attack_damage * damage_mult)), "enemies", _proj_color, "player")
+	var p := ARROW_SCENE.instantiate() as Arrow
+	p.setup(dir, _proj_speed, int(round(attack_damage * damage_mult)), "enemies", "player")
 	get_parent().add_child(p)
 	p.global_position = start + dir * 0.9 # sur la ligne de visée : même direction depuis la bouche du canon
 
