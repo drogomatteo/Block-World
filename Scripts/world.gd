@@ -99,8 +99,7 @@ var _class_label: Label
 var _special_bar: ProgressBar
 var _stamina_bar: ProgressBar
 var _water_mat: ShaderMaterial
-var _shadows_on := true             # option « ombres » (vraies ombres du soleil)
-var _deco_on := true                # option « décorations au sol »
+var _grass_on := true               # option « herbe au sol »
 var _options: OptionsMenu
 var _day_night: DayNight
 var _underwater := false            # la caméra est-elle sous la surface ?
@@ -229,12 +228,12 @@ func set_render_distance(v: int) -> void:
 	# jamais les chunks apparaître/disparaître au bord.
 	if _day_night != null:
 		_day_night.fog_end = view_dist_m()
-	# La distance des décos est relative : recaler les chunks déjà chargés.
+	# La distance de l'herbe est relative : recaler les chunks déjà chargés.
 	for key in loaded_chunks:
 		var c: Chunk = loaded_chunks[key]
-		c.deco_view_dist = _deco_view_dist()
-		if c.deco_mmi != null:
-			c.deco_mmi.visibility_range_end = c.deco_view_dist
+		c.grass_view_dist = _grass_view_dist()
+		if c.grass_mmi != null:
+			c.grass_mmi.visibility_range_end = c.grass_view_dist
 	# Avant la création du joueur, current_center n'est pas encore valide :
 	# rafraîchir maintenant déchargerait le chunk de spawn.
 	if player != null:
@@ -372,9 +371,8 @@ func _build_chunk(key: Vector2i) -> void:
 	c.cx = key.x
 	c.cz = key.y
 	c.water_material = _water_mat
-	c.deco_view_dist = _deco_view_dist()
-	c.deco_visible = _deco_on
-	c.tree_shadows_visible = not _shadows_on
+	c.grass_view_dist = _grass_view_dist()
+	c.grass_visible = _grass_on
 	# Détail selon la distance : la collision et les maillages fins des arbres
 	# n'existent que près du joueur (la mémoire suit, voir chunk.gd).
 	var ring := _chunk_ring(key)
@@ -392,29 +390,21 @@ func _build_chunk(key: Vector2i) -> void:
 func view_dist_m() -> float:
 	return float(render_distance) * float(chunk_size) * Chunk.CUBE
 
-# Les petites décos disparaissent à la moitié de la distance d'affichage :
-# RELATIF au réglage, avec un plancher pour rester visibles de près.
-func _deco_view_dist() -> float:
-	return maxf(view_dist_m() * 0.5, 20.0)
+# L'herbe disparaît bien avant la limite des chunks : relative au réglage,
+# mais PLAFONNÉE — les touffes se paient en sommets ; un rayon de 60 m suffit
+# largement, au-delà les brins sont sub-pixel.
+func _grass_view_dist() -> float:
+	return clampf(view_dist_m() * 0.25, 20.0, 60.0)
 
-# Ombres réelles on/off. Quand elles sont coupées, les ombres RONDES des
-# arbres prennent le relais (celles des entités sont toujours affichées).
-func set_shadows_enabled(on: bool) -> void:
-	_shadows_on = on
-	($DirectionalLight3D as DirectionalLight3D).shadow_enabled = on
-	for key in loaded_chunks:
-		var c: Chunk = loaded_chunks[key]
-		c.tree_shadows_visible = not on
-		if c.tree_shadow_mmi != null:
-			c.tree_shadow_mmi.visible = not on
-
+# Herbe au sol on/off. Garde son nom historique : l'option des menus et la clé
+# « decorations » de settings.cfg pointent ici — l'herbe EST la déco au sol.
 func set_decorations(on: bool) -> void:
-	_deco_on = on
+	_grass_on = on
 	for key in loaded_chunks:
 		var c: Chunk = loaded_chunks[key]
-		c.deco_visible = on
-		if c.deco_mmi != null:
-			c.deco_mmi.visible = on
+		c.grass_visible = on
+		if c.grass_mmi != null:
+			c.grass_mmi.visible = on
 
 # ---------- Ennemis ----------
 

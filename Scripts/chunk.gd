@@ -14,21 +14,58 @@ extends Node3D
 
 # 32 (doublé le 2026-07-25) : à couverture égale en mètres, 4× moins de chunks
 # donc 4× moins de nœuds/objets dessinés (chaque chunk porte ~5-7 nœuds fixes :
-# MultiMesh terrain, eau, décos, ombres d'arbres...). La distance de rendu par
+# MultiMesh terrain, eau, herbe, ombres d'arbres...). La distance de rendu par
 # défaut a été divisée par 2 en face (même vue monde qu'avant).
 const SIZE := 32
 # Taille MONDE d'un cube : le TIERS de la taille du joueur (capsule 1.8 m).
 # TerrainGen travaille en indices de cube ; tout ce qui parle en mètres passe par CUBE.
 const CUBE := 0.6
 
+# L'herbe de l'utilisateur (Assets/Grass.tscn) fusionnée en UN maillage par
+# tools/gen_grass_mesh.gd : chaque chunk l'instancie via son propre MultiMesh
+# (1 draw call pour toute l'herbe du chunk).
+const GRASS_MESH := preload("res://Assets/grass_mesh.res")
+
+# Vent sur l'herbe : errance pseudo-brownienne (somme de sinus à fréquences
+# incommensurables = balancement doux jamais périodique à l'œil), NULLE au pied
+# du brin et maximale à la pointe (poids quadratique sur la hauteur mesh 0..0.6).
+# La phase dérive de la position du brin dans la touffe ET de la touffe dans le
+# monde : chaque brin erre pour son compte. L'amplitude suit l'échelle Y de
+# l'instance (l'herbe rase des lisières bouge moins que l'herbe haute).
+# fragment() reproduit vertex_color_use_as_albedo (COLOR = nuance par brin
+# cuite dans le maillage × couleur d'instance accordée au sol).
+const GRASS_SHADER := """
+shader_type spatial;
+
+uniform float sway_amp = 0.03; // demi-amplitude à la pointe, en mètres
+
+void vertex() {
+	float w = clamp(VERTEX.y / 0.6, 0.0, 1.0);
+	w *= w * length(MODEL_MATRIX[1].xyz);
+	float ph = VERTEX.x * 17.0 + VERTEX.z * 23.0
+		+ MODEL_MATRIX[3].x * 3.1 + MODEL_MATRIX[3].z * 4.7;
+	vec2 sway = vec2(
+		sin(TIME * 1.9 + ph) + 0.6 * sin(TIME * 3.7 + ph * 1.7),
+		sin(TIME * 1.4 + ph * 1.3) + 0.6 * sin(TIME * 2.9 + ph * 0.8));
+	VERTEX.xz += sway * sway_amp * w;
+}
+
+void fragment() {
+	ALBEDO = COLOR.rgb;
+}
+"""
+
+# Matériau de vent PARTAGÉ par tous les chunks (posé en material_override sur
+# leur MultiMesh d'herbe) : un seul Shader compilé pour tout le monde.
+static var _grass_material: ShaderMaterial
+
 var gen: TerrainGen
 var cx: int
 var cz: int
 var water_material: Material # partagé, créé une seule fois par world.gd
-var deco_view_dist := 0.0    # distance d'affichage des décos (0 = illimitée)
-var deco_visible := true     # option « décorations au sol »
-var tree_shadows_visible := false # ombres rondes sous les arbres (ombres OFF)
-var deco_mmi: MultiMeshInstance3D        # relu par world.gd (toggles à chaud)
+var grass_view_dist := 0.0   # distance d'affichage de l'herbe (0 = illimitée)
+var grass_visible := true    # option « herbe au sol »
+var grass_mmi: MultiMeshInstance3D       # relu par world.gd (toggles à chaud)
 var tree_shadow_mmi: MultiMeshInstance3D
 var tree_detail := 0        # 0 = plein détail, 1 = LOD1+LOD2, 2 = LOD2 seul
 var collision_on := true    # collider terrain + corps des arbres (près du joueur)
@@ -41,7 +78,7 @@ func build() -> void:
 	_scan_tree_sites()
 	_build_trees()
 	_build_tree_shadows()
-	_build_deco()
+	_build_grass()
 	_build_water()
 	if collision_on:
 		_build_collision()
@@ -169,17 +206,18 @@ func _build_trees() -> void:
 		t.position = Vector3(s.x * CUBE, (float(h) + 0.5) * CUBE, s.z * CUBE)
 		_tree_nodes.append(t)
 
-# Ombres rondes sous les troncs : un seul MultiMesh par chunk, affiché
-# uniquement quand les vraies ombres sont désactivées (sinon elles se
-# cumuleraient avec l'ombre portée du soleil). Indépendant du niveau de
+# Ombres rondes sous les troncs : un seul MultiMesh par chunk. Le jeu n'a PLUS
+# d'ombres temps réel (choix assumé, 2026-07-26) : ces disques sont LE système
+# d'ombre des arbres, affichés en permanence. Indépendant du niveau de
 # détail : construit une seule fois.
 func _build_tree_shadows() -> void:
 	if _tree_sites.is_empty():
 		return
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
-	# Rayon 4 m : de l'ordre du rayon des canopées procédurales (~3-4.5 m).
-	mm.mesh = FX.blob_shadow_mesh(4.0)
+	# Rayon 6 m : de l'ordre des canopées procédurales (12-17 m de large) —
+	# agrandi depuis 4 m quand ces disques sont devenus la seule ombre du jeu.
+	mm.mesh = FX.blob_shadow_mesh(6.0)
 	mm.instance_count = _tree_sites.size()
 	for i in _tree_sites.size():
 		var s := _tree_sites[i]
@@ -188,54 +226,65 @@ func _build_tree_shadows() -> void:
 	tree_shadow_mmi = MultiMeshInstance3D.new()
 	tree_shadow_mmi.multimesh = mm
 	tree_shadow_mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	tree_shadow_mmi.visible = tree_shadows_visible
 	add_child(tree_shadow_mmi)
 
-# Décorations (herbe, fleurs, cactus, rochers) : un seul MultiMesh de plus
-# par chunk, mise à l'échelle par instance via la Basis du transform.
-func _build_deco() -> void:
+# Hauteur des brins à la NAISSANCE d'une nappe (bruit pile au seuil), en
+# fraction de la hauteur de l'asset ; elle monte à 1 au cœur (grass_amount).
+const GRASS_MIN_H := 0.35
+
+# Herbe : les touffes (TerrainGen.grass_amount) d'un chunk tiennent dans UN
+# seul MultiMesh du maillage fusionné — 1 draw call quelle que soit la densité.
+# La quantité de bruit au-dessus du seuil pilote la HAUTEUR par instance
+# (échelle Y : herbe rase aux lisières des nappes, haute au cœur). La couleur
+# par instance reprend la couleur du bloc de surface (biome + dérive de teinte
+# comprises), légèrement éclaircie pour que les brins se détachent du sol.
+func _build_grass() -> void:
 	var transforms: Array[Transform3D] = []
 	var colors: Array[Color] = []
 	for lx in SIZE:
 		for lz in SIZE:
 			var wx := cx * SIZE + lx
 			var wz := cz * SIZE + lz
-			var d := gen.get_decoration(wx, wz)
-			if d.is_empty():
+			var amount := gen.grass_amount(wx, wz)
+			if amount <= 0.0:
 				continue
 			var h := gen.get_height(wx, wz)
-			var size: Vector3 = d["size"] # taille MONDE (les décos ne rétrécissent pas avec les cubes)
-			var pos := Vector3(lx * CUBE, (float(h) + 0.5) * CUBE + size.y * 0.5, lz * CUBE)
-			transforms.append(Transform3D(Basis().scaled(size), pos))
-			colors.append(d["color"])
+			# Quart de tour déterministe par bloc : casse la répétition du motif.
+			var b := Basis(Vector3.UP, floorf(gen.rand01(wx, wz, 25) * 4.0) * (PI / 2.0)) \
+				.scaled(Vector3(1.0, lerpf(GRASS_MIN_H, 1.0, amount), 1.0))
+			transforms.append(Transform3D(b, Vector3(lx * CUBE, (float(h) + 0.5) * CUBE, lz * CUBE)))
+			colors.append(gen.get_color(wx, wz, h, h).lightened(0.07))
 	if transforms.is_empty():
 		return
-
-	var box := BoxMesh.new()
-	box.size = Vector3.ONE
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	box.material = mat
 
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
-	mm.mesh = box
+	mm.mesh = GRASS_MESH
 	mm.instance_count = transforms.size()
 	for i in transforms.size():
 		mm.set_instance_transform(i, transforms[i])
 		mm.set_instance_color(i, colors[i])
 
-	deco_mmi = MultiMeshInstance3D.new()
-	deco_mmi.multimesh = mm
-	deco_mmi.visible = deco_visible
-	if deco_view_dist > 0.0:
-		# Les petites décos disparaissent (en fondu) bien avant la limite des
-		# chunks : invisible de loin de toute façon, et ça allège le rendu.
-		deco_mmi.visibility_range_end = deco_view_dist
-		deco_mmi.visibility_range_end_margin = 4.0
-		deco_mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
-	add_child(deco_mmi)
+	if _grass_material == null:
+		var sh := Shader.new()
+		sh.code = GRASS_SHADER
+		_grass_material = ShaderMaterial.new()
+		_grass_material.shader = sh
+	grass_mmi = MultiMeshInstance3D.new()
+	grass_mmi.multimesh = mm
+	grass_mmi.material_override = _grass_material
+	grass_mmi.visible = grass_visible
+	# Plus d'ombres temps réel dans le jeu (2026-07-26) : projection coupée
+	# aussi ici, au cas où une lumière à ombres réapparaîtrait un jour.
+	grass_mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if grass_view_dist > 0.0:
+		# L'herbe disparaît (en fondu) bien avant la limite des chunks :
+		# invisible de loin de toute façon, et chaque touffe se paie en sommets.
+		grass_mmi.visibility_range_end = grass_view_dist
+		grass_mmi.visibility_range_end_margin = 4.0
+		grass_mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	add_child(grass_mmi)
 
 # L'eau est un BLOC comme les autres, SANS COLLISION : chaque colonne immergée
 # porte un bloc d'eau de surface, aligné sur la grille du monde, dont on émet

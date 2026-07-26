@@ -214,19 +214,20 @@ func _run() -> void:
 		"transect océan→spawn : fond marin (%d), plage (%d), terre (%d)" % [submerged, beach, emerged])
 	check(trees_underwater == 0, "aucun arbre sous l'eau sur le transect")
 
-	# Coraux (colonnes fines colorées) et roches aquatiques sur le fond marin.
-	var corals := 0
-	var rocks := 0
+	# L'herbe (has_grass) ne pousse jamais en mer (îlots de sable compris) ni
+	# sur un bloc immergé ou de plage. La zone balayée peut mordre sur la terre
+	# ferme : l'herbe y est légitime, on ne compte que les colonnes marines.
+	var ocean_grass := 0
 	for dx in range(-48, 49, 2):
 		for dz in range(-48, 49, 2):
-			var deco := gen.get_decoration(deep_pos.x + dx, deep_pos.y + dz)
-			if deco.is_empty():
+			var ogx := deep_pos.x + dx
+			var ogz := deep_pos.y + dz
+			if not gen.has_grass(ogx, ogz):
 				continue
-			if (deco["size"] as Vector3).x < 0.3:
-				corals += 1
-			else:
-				rocks += 1
-	check(corals > 0 and rocks > 0, "fond marin décoré : %d coraux, %d roches aquatiques" % [corals, rocks])
+			if gen.get_biome(ogx, ogz) == TerrainGen.Biome.OCEAN \
+					or float(gen.get_height(ogx, ogz)) + 0.5 < TerrainGen.WATER_Y + 1.0:
+				ocean_grass += 1
+	check(ocean_grass == 0, "aucune herbe en mer ni sur un bloc immergé/plage (%d intrus)" % ocean_grass)
 
 	# Hors océan : la seule eau est celle des fleuves (plus de lacs aléatoires).
 	var stray_water := 0
@@ -301,10 +302,47 @@ func _run() -> void:
 		var t_dh: float = tint_max[b].x - tint_min[b].x
 		var t_dv: float = tint_max[b].y - tint_min[b].y
 		tint_msg = "%d colonnes, Δteinte %.3f, Δluminosité %.3f" % [tint_n[b], t_dh, t_dv]
-		if t_dh > 0.02 and t_dv > 0.05:
+		# Seuils calés sur les valeurs retenues par l'utilisateur (2026-07-26) :
+		# la dérive passe surtout par la TEINTE (±0.08), très peu par la
+		# luminosité (±2 %).
+		if t_dh > 0.05 and t_dv > 0.008:
 			tint_ok = true
 			break
 	check(tint_ok, "le vert de l'herbe varie par patches (%s)" % tint_msg)
+
+	# --- Herbe posée par bruit (has_grass) : des nappes ET des clairières ---
+	var grass_cols := 0
+	var bare_cols := 0
+	var grass_misplaced := 0
+	for dx in range(-200, 201, 2):
+		for dz in range(-200, 201, 2):
+			var x := spawn_col.x + dx
+			var z := spawn_col.y + dz
+			var b := gen.get_biome(x, z)
+			var green := (b == TerrainGen.Biome.PLAINS or b == TerrainGen.Biome.FOREST) \
+				and gen.can_spawn_flora(x, z) and not gen.has_tree(x, z)
+			if gen.has_grass(x, z):
+				grass_cols += 1
+				if not green:
+					grass_misplaced += 1
+			elif green:
+				bare_cols += 1
+	check(grass_cols > 0 and bare_cols > 0,
+		"le bruit d'herbe trace nappes et clairières (%d colonnes herbeuses, %d nues)" % [grass_cols, bare_cols])
+	check(grass_misplaced == 0,
+		"l'herbe reste en plaine/forêt, hors eau/plage/troncs (%d intrus)" % grass_misplaced)
+	# Hauteur pilotée par le bruit : grass_amount monte de ~0 (lisière, bruit au
+	# seuil) vers 1 (cœur de nappe) — le chunk en fait l'échelle Y des brins.
+	var ga_min := 1.0
+	var ga_max := 0.0
+	for dx in range(-200, 201, 2):
+		for dz in range(-200, 201, 2):
+			var ga: float = gen.grass_amount(spawn_col.x + dx, spawn_col.y + dz)
+			if ga > 0.0:
+				ga_min = minf(ga_min, ga)
+				ga_max = maxf(ga_max, ga)
+	check(ga_min < 0.3 and ga_max > 0.7,
+		"hauteur d'herbe graduée du seuil au cœur des nappes (%.2f..%.2f)" % [ga_min, ga_max])
 
 	# Une rivière terrestre existe : colonne creusée sous le niveau de l'eau,
 	# hors océan (recherche en spirale, anneaux de 16 cubes).
@@ -349,9 +387,8 @@ func _run() -> void:
 				run = 0
 		var width := maxi(best_x, best_z)
 		check(width >= 14, "le fleuve est large (%d colonnes ≈ %.1f m d'eau)" % [width, width * Chunk.CUBE])
-		# Lit du fleuve : décoré (plantes aquatiques, pierres) et PAS plat.
-		var plants := 0
-		var stones := 0
+		# Lit du fleuve : PAS plat (dunes/fosses du bruit détail) et sans herbe.
+		var river_grass := 0
 		var bed_min := 99999
 		var bed_max := -99999
 		for dx2 in range(-40, 41):
@@ -363,14 +400,9 @@ func _run() -> void:
 				var hh := gen.get_height(x2, z2)
 				bed_min = mini(bed_min, hh)
 				bed_max = maxi(bed_max, hh)
-				var rdeco := gen.get_decoration(x2, z2)
-				if rdeco.is_empty():
-					continue
-				if (rdeco["size"] as Vector3).x < 0.2:
-					plants += 1
-				else:
-					stones += 1
-		check(plants > 0 and stones > 0, "lit du fleuve décoré : %d plantes, %d pierres" % [plants, stones])
+				if gen.has_grass(x2, z2):
+					river_grass += 1
+		check(river_grass == 0, "aucune herbe dans le lit du fleuve (%d intrus)" % river_grass)
 		check(bed_max - bed_min >= 2, "le fond du fleuve a du relief (%d..%d cubes)" % [bed_min, bed_max])
 		# Vallée fluviale : en traversant le fleuve, aucune paroi abrupte —
 		# l'ancien canyon dans la montagne tombait de 7+ cubes d'un coup.
@@ -587,33 +619,72 @@ func _run() -> void:
 	check(water_uv_found and water_uv_bad == 0,
 		"blocs d'eau : UV 0..1 par bloc (%d hors bornes)" % water_uv_bad)
 
-	# --- Optimisations d'affichage (décos, ombres, brouillard, LOD) ---
-	var deco_chunk: Chunk = null
+	# --- Optimisations d'affichage (herbe, ombres, brouillard, LOD) ---
+	var grass_chunk: Chunk = null
 	for key in world.loaded_chunks:
-		if world.loaded_chunks[key].deco_mmi != null:
-			deco_chunk = world.loaded_chunks[key]
+		if world.loaded_chunks[key].grass_mmi != null:
+			grass_chunk = world.loaded_chunks[key]
 			break
-	check(deco_chunk != null and deco_chunk.deco_mmi.visibility_range_end > 0.0,
-		"décos limitées à une distance RELATIVE (%.0f m)"
-		% (deco_chunk.deco_mmi.visibility_range_end if deco_chunk != null else -1.0))
+	check(grass_chunk != null and grass_chunk.grass_mmi.visibility_range_end > 0.0,
+		"herbe limitée à une distance relative (%.0f m)"
+		% (grass_chunk.grass_mmi.visibility_range_end if grass_chunk != null else -1.0))
+	# 1 draw call par chunk : toutes les touffes partagent le MÊME maillage
+	# fusionné (les 128 brins de Assets/Grass.tscn) dans UN MultiMesh.
+	check(grass_chunk != null and grass_chunk.grass_mmi.multimesh.mesh == Chunk.GRASS_MESH \
+			and grass_chunk.grass_mmi.multimesh.instance_count > 0,
+		"herbe du chunk fusionnée en 1 MultiMesh (%d touffes)"
+		% (grass_chunk.grass_mmi.multimesh.instance_count if grass_chunk != null else 0))
+	# Nombre de brins RELU dans l'asset (l'utilisateur le fait évoluer) :
+	# 24 sommets par brin-boîte après fusion.
+	var grass_src = (load("res://Assets/Grass.tscn") as PackedScene).instantiate()
+	var blade_count := 0
+	for gsc in grass_src.get_children():
+		if gsc is MultiMeshInstance3D:
+			blade_count = (gsc as MultiMeshInstance3D).multimesh.instance_count
+	grass_src.free()
+	check(blade_count > 0 and (Chunk.GRASS_MESH.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() == blade_count * 24,
+		"maillage d'herbe : %d brins fusionnés en 1 surface" % blade_count)
+	# Le maillage est cuit AVEC le transform du nœud MultiMeshInstance3D de
+	# l'asset (hauteur des brins réglée par l'utilisateur) : rien sous -0.1.
+	check(Chunk.GRASS_MESH.get_aabb().position.y > -0.1,
+		"brins posés sur le sol (transform du nœud cuit, aabb y=%.2f)" % Chunk.GRASS_MESH.get_aabb().position.y)
+	check(grass_chunk != null \
+			and grass_chunk.grass_mmi.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
+		"l'herbe ne projette pas d'ombre (plus d'ombres temps réel)")
+	# Vent : un ShaderMaterial partagé anime les brins (déplacement des sommets
+	# par TIME, pondéré par la hauteur VERTEX.y — nul au pied, plein en pointe).
+	var wind_ok := false
+	if grass_chunk != null and grass_chunk.grass_mmi.material_override is ShaderMaterial:
+		var wcode: String = (grass_chunk.grass_mmi.material_override as ShaderMaterial).shader.code
+		wind_ok = "TIME" in wcode and "VERTEX.y" in wcode
+	check(wind_ok, "les brins ondulent au vent (shader partagé, poids par hauteur)")
+	# Couleur accordée au sol : par instance (use_colors). La valeur elle-même
+	# n'est PAS relisible en headless (get_instance_color renvoie du noir, le
+	# RenderingServer factice ne stocke pas le tampon) — on vérifie le canal.
+	check(grass_chunk != null and grass_chunk.grass_mmi.multimesh.use_colors,
+		"touffes colorées par instance (couleur du bloc de sol)")
 	world.set_decorations(false)
-	check(deco_chunk != null and not deco_chunk.deco_mmi.visible, "option : décorations au sol masquées")
+	check(grass_chunk != null and not grass_chunk.grass_mmi.visible, "option : herbe au sol masquée")
 	world.set_decorations(true)
-	check(deco_chunk != null and deco_chunk.deco_mmi.visible, "option : décorations au sol réaffichées")
+	check(grass_chunk != null and grass_chunk.grass_mmi.visible, "option : herbe au sol réaffichée")
+	# Plus AUCUNE ombre temps réel (choix utilisateur 2026-07-26) : le soleil ne
+	# projette pas, les ombres rondes (arbres, entités) sont LE système d'ombre,
+	# affichées en permanence, et le disque des arbres est agrandi (rayon 6 m).
 	var sun_l: DirectionalLight3D = world.get_node("DirectionalLight3D")
+	check(not sun_l.shadow_enabled, "plus d'ombres temps réel (soleil sans shadow map)")
 	var shadow_chunk: Chunk = null
 	for key in world.loaded_chunks:
 		if world.loaded_chunks[key].tree_shadow_mmi != null:
 			shadow_chunk = world.loaded_chunks[key]
 			break
-	world.set_shadows_enabled(false)
-	check(not sun_l.shadow_enabled, "option : ombres du soleil coupées")
 	check(shadow_chunk != null and shadow_chunk.tree_shadow_mmi.visible,
-		"ombres rondes sous les arbres quand les vraies ombres sont coupées")
-	world.set_shadows_enabled(true)
-	check(sun_l.shadow_enabled and (shadow_chunk == null or not shadow_chunk.tree_shadow_mmi.visible),
-		"ombres réelles restaurées, ombres rondes d'arbres masquées")
-	check(world._options.find_child("ShadowsOnCheck", true, false) != null, "case Ombres dans les options")
+		"ombres rondes permanentes sous les arbres")
+	var blob_mesh: PlaneMesh = shadow_chunk.tree_shadow_mmi.multimesh.mesh if shadow_chunk != null else null
+	check(blob_mesh != null and absf(blob_mesh.size.x - 12.0) < 0.01,
+		"disque d'ombre d'arbre agrandi (%.0f m de diamètre)" % (blob_mesh.size.x if blob_mesh != null else 0.0))
+	check(world._options.find_child("ShadowsOnCheck", true, false) == null \
+			and world._options.find_child("ShadowsBtn", true, false) == null,
+		"options : plus aucun réglage d'ombres")
 	check(world._options.find_child("DecoCheck", true, false) != null, "case Décorations dans les options")
 	world._day_night._apply()
 	var envf: Environment = world.get_node("WorldEnvironment").environment

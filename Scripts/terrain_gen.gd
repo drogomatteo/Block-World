@@ -65,6 +65,7 @@ var biome_noise: FastNoiseLite
 var continent_noise: FastNoiseLite
 var river_noise: FastNoiseLite
 var tint_noise: FastNoiseLite
+var grass_noise: FastNoiseLite
 
 func setup(seed_value: int) -> void:
 	world_seed = seed_value
@@ -106,6 +107,13 @@ func setup(seed_value: int) -> void:
 	tint_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	tint_noise.seed = seed_value + 32768
 	tint_noise.frequency = 0.012
+
+	# Herbe : le bruit découpe des NAPPES d'herbe (~20 m) séparées de clairières
+	# nues dans les plaines et forêts — ni tapis uniforme, ni semis aléatoire.
+	grass_noise = FastNoiseLite.new()
+	grass_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	grass_noise.seed = seed_value + 65536
+	grass_noise.frequency = 0.09
 
 func get_biome(wx: int, wz: int) -> int:
 	if continent_noise.get_noise_2d(float(wx), float(wz)) < OCEAN_T:
@@ -285,64 +293,30 @@ func has_tree(wx: int, wz: int) -> bool:
 			chance = 0.22
 	return rand01(cx, cz, 23) < chance
 
-# Petite décoration posée sur le bloc (herbe, fleur, cactus, rocher... et au
-# fond de la mer : coraux, roches aquatiques).
-# Renvoie {} s'il n'y a rien, sinon {"size": Vector3, "color": Color}.
-func get_decoration(wx: int, wz: int) -> Dictionary:
-	var r := rand01(wx, wz, 7)
-	if get_biome(wx, wz) == Biome.OCEAN:
-		# Fond marin : uniquement là où c'est assez profond pour que la déco
-		# reste entièrement sous l'eau (2 cubes sous la surface).
-		if float(get_height(wx, wz)) + 0.5 > WATER_Y - 2.0:
-			return {}
-		if r < 0.012:
-			# Corail : colonne fine et colorée, hauteur variée.
-			var cols := [Color(0.95, 0.35, 0.50), Color(1.0, 0.55, 0.25),
-				Color(0.70, 0.35, 0.85), Color(0.25, 0.85, 0.80)]
-			var hgt := 0.35 + rand01(wx, wz, 11) * 0.55
-			return {"size": Vector3(0.22, hgt, 0.22),
-				"color": cols[int(rand01(wx, wz, 13) * cols.size()) % cols.size()]}
-		elif r < 0.019:
-			# Roche aquatique : bloc trapu gris-bleu.
-			var s := 0.35 + rand01(wx, wz, 11) * 0.35
-			return {"size": Vector3(s, s * 0.7, s), "color": Color(0.33, 0.40, 0.46)}
-		return {}
-	if _river_dist(wx, wz) < RIVER_BANK_W \
-			and float(get_height(wx, wz)) + 0.5 <= WATER_Y - 2.0:
-		# Lit du fleuve (assez profond pour que la déco reste sous l'eau) :
-		# plantes aquatiques ondulant vers la surface et pierres de rivière.
-		if r < 0.022:
-			var hgt := 0.35 + rand01(wx, wz, 11) * 0.55
-			return {"size": Vector3(0.14, hgt, 0.14), "color": Color(0.16, 0.52, 0.30)} # plante
-		elif r < 0.032:
-			var s := 0.3 + rand01(wx, wz, 11) * 0.3
-			return {"size": Vector3(s, s * 0.65, s), "color": Color(0.44, 0.46, 0.49)} # pierre
-		return {}
+# Largeur de la rampe de hauteur, en unités de bruit AU-DESSUS du seuil :
+# à la valeur seuil l'herbe naît rase, elle atteint sa pleine hauteur quand le
+# bruit dépasse le seuil de GRASS_RAMP (au cœur des nappes).
+const GRASS_RAMP := 0.35
+
+# Quantité d'herbe 0..1 sur ce bloc. 0 = pas d'herbe : PLAINS et FOREST
+# seulement, jamais dans l'eau, sur la plage (can_spawn_flora) ni au pied d'un
+# tronc, et bruit sous le seuil du biome. Au-dessus du seuil, la valeur du
+# bruit normalisée par GRASS_RAMP : 0+ en bord de nappe, 1 au cœur — Chunk
+# s'en sert pour la HAUTEUR des brins (herbe rase aux lisières, haute au centre).
+func grass_amount(wx: int, wz: int) -> float:
+	var biome := get_biome(wx, wz)
+	if biome != Biome.PLAINS and biome != Biome.FOREST:
+		return 0.0
 	if not can_spawn_flora(wx, wz):
-		return {} # rien dans l'eau ni sur la plage
+		return 0.0
 	if has_tree(wx, wz):
-		return {} # jamais de déco sous un arbre
-	# Mêmes probabilités par colonne divisées par 4 que has_tree (densité monde).
-	match get_biome(wx, wz):
-		Biome.PLAINS:
-			if r < 0.012:
-				return {"size": Vector3(0.12, 0.3, 0.12), "color": Color(0.45, 0.72, 0.30)} # touffe d'herbe
-			elif r < 0.017:
-				var cols := [Color(0.95, 0.30, 0.30), Color(0.98, 0.85, 0.30), Color(0.95, 0.95, 0.95), Color(0.90, 0.50, 0.80)]
-				return {"size": Vector3(0.16, 0.16, 0.16), "color": cols[int(rand01(wx, wz, 11) * cols.size()) % cols.size()]} # fleur
-		Biome.FOREST:
-			if r < 0.023:
-				return {"size": Vector3(0.12, 0.28, 0.12), "color": Color(0.30, 0.55, 0.25)}
-		Biome.DESERT:
-			if r < 0.003:
-				return {"size": Vector3(0.3, 1.0 + rand01(wx, wz, 11) * 0.7, 0.3), "color": Color(0.28, 0.55, 0.30)} # cactus
-		Biome.MOUNTAINS:
-			if r < 0.005:
-				return {"size": Vector3(0.4, 0.35, 0.4), "color": Color(0.45, 0.45, 0.48)} # rocher
-		Biome.SNOW:
-			if r < 0.003:
-				return {"size": Vector3(0.4, 0.35, 0.4), "color": Color(0.60, 0.62, 0.66)}
-	return {}
+		return 0.0
+	var t := 0.5 if biome == Biome.PLAINS else 0.1
+	var n := grass_noise.get_noise_2d(float(wx), float(wz))
+	return clampf((n - t) / GRASS_RAMP, 0.0, 1.0)
+
+func has_grass(wx: int, wz: int) -> bool:
+	return grass_amount(wx, wz) > 0.0
 
 # Pseudo-aléatoire déterministe dans [0, 1) à partir de (a, b), du seed et
 # d'un sel optionnel (pour tirer plusieurs valeurs indépendantes au même point).

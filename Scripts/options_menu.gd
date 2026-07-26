@@ -16,7 +16,6 @@ const RESOLUTIONS: Array[Vector2i] = [
 	Vector2i(1920, 1080), Vector2i(2560, 1440),
 ]
 const FPS_OPTIONS := [0, 60, 120, 144] # 0 = illimité
-const SHADOW_SIZES := [1024, 2048, 4096]
 
 var world = null      # référence au nœud World (non typée : accès dynamique)
 var player = null     # null tant que la classe n'est pas choisie
@@ -29,8 +28,6 @@ var settings := {
 	"render_scale": 1.0,   # échelle de rendu 3D (l'interface reste nette)
 	"upscale_mode": 0,     # 0 bilinéaire, 1 FSR 1.0, 2 FSR 2.2
 	"msaa": 0,             # 0 off, 1 = 2x, 2 = 4x
-	"shadows": 1,          # index dans SHADOW_SIZES
-	"shadows_enabled": true,  # ombres réelles du soleil (off = ombres rondes)
 	"vsync": true,
 	"fps_index": 0,        # index dans FPS_OPTIONS
 	"mouse_sens": 0.005,
@@ -38,7 +35,7 @@ var settings := {
 	"render_distance": 15,
 	"render_dist_x3": false, # migration du 2026-07-24 (distance triplée), une fois
 	"chunks_x2": false,      # migration du 2026-07-25 (chunks 16 -> 32), une fois
-	"decorations": true,   # herbe, fleurs, cailloux... posés sur le sol
+	"decorations": true,   # herbe posée sur les blocs (clé historique conservée)
 }
 
 var is_open := false
@@ -103,7 +100,6 @@ func _apply_all() -> void:
 	_apply_render_scale()
 	_apply_upscale_mode()
 	_apply_msaa()
-	_apply_shadows()
 	_apply_vsync()
 	_apply_fps()
 	_apply_game()
@@ -134,14 +130,6 @@ func _apply_upscale_mode() -> void:
 
 func _apply_msaa() -> void:
 	get_tree().root.msaa_3d = settings.msaa as Viewport.MSAA
-
-func _apply_shadows() -> void:
-	var s: int = SHADOW_SIZES[settings.shadows]
-	RenderingServer.directional_shadow_atlas_set_size(s, true)
-	get_tree().root.positional_shadow_atlas_size = s
-	# Ombres réelles on/off ; le monde bascule aussi les ombres rondes des arbres.
-	if world != null and world.has_method("set_shadows_enabled"):
-		world.set_shadows_enabled(bool(settings.shadows_enabled))
 
 func _apply_vsync() -> void:
 	DisplayServer.window_set_vsync_mode(
@@ -180,8 +168,6 @@ func _build() -> void:
 	%RenderScaleSlider.value = settings.render_scale
 	%UpscaleBtn.selected = clampi(int(settings.upscale_mode), 0, 2)
 	%MsaaBtn.selected = clampi(int(settings.msaa), 0, 2)
-	%ShadowsBtn.selected = clampi(int(settings.shadows), 0, SHADOW_SIZES.size() - 1)
-	%ShadowsOnCheck.button_pressed = settings.shadows_enabled
 	%DecoCheck.button_pressed = settings.decorations
 	%VsyncCheck.button_pressed = settings.vsync
 	%FpsBtn.selected = clampi(int(settings.fps_index), 0, FPS_OPTIONS.size() - 1)
@@ -264,12 +250,6 @@ func _on_vsync_check_toggled(v: bool) -> void:
 	_update_setting("vsync", v, _apply_vsync)
 
 
-func _on_shadows_btn_item_selected(i: int) -> void:
-	_update_setting("shadows", i, _apply_shadows)
-
-
-func _on_shadows_on_check_toggled(v: bool) -> void:
-	_update_setting("shadows_enabled", v, _apply_shadows)
 
 
 func _on_deco_check_toggled(v: bool) -> void:

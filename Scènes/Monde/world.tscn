@@ -29,8 +29,6 @@ script = ExtResource("1_1g7dt")
 transform = Transform3D(1, 0, 0, 0, 0.70710677, 0.70710677, 0, -0.70710677, 0.70710677, 0, 0, 0)
 light_color = Color(1, 0.96, 0.88, 1)
 light_energy = 1.25
-shadow_enabled = true
-directional_shadow_max_distance = 180.0
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1040298022]
 environment = SubResource("Environment_km2js")
