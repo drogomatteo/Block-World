@@ -105,7 +105,7 @@ func setup(seed_value: int) -> void:
 	tint_noise = FastNoiseLite.new()
 	tint_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	tint_noise.seed = seed_value + 32768
-	tint_noise.frequency = 0.02
+	tint_noise.frequency = 0.012
 
 func get_biome(wx: int, wz: int) -> int:
 	if continent_noise.get_noise_2d(float(wx), float(wz)) < OCEAN_T:
@@ -214,8 +214,8 @@ func get_color(wx: int, wz: int, y: int, h: int) -> Color:
 		# profonde selon le patch. Appliquée AVANT les cas plage/immergé/enterré
 		# (qui écrasent ou assombrissent la couleur, teinte comprise).
 		var t := tint_noise.get_noise_2d(float(wx), float(wz))
-		c.h = wrapf(c.h + t * 0.03, 0.0, 1.0)
-		c.v = clampf(c.v * (1.0 + t * 0.12), 0.0, 1.0)
+		c.h = wrapf(c.h + t * 0.08, 0.0, 1.0)
+		c.v = clampf(c.v * (1.0 + t * 0.02), 0.0, 1.0)
 	var top := float(h) + 0.5
 	if top < WATER_Y:
 		# Bloc immergé : lit sableux, assombri avec la profondeur.

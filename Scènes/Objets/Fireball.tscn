@@ -56,7 +56,7 @@ scale_amount_curve = SubResource("Curve_b04ph")
 
 [node name="OmniLight3D" type="OmniLight3D" parent="." unique_id=1049665430]
 light_color = Color(1, 0.23529412, 0.15686275, 1)
-omni_range = 1.0
-omni_attenuation = 0.7
+omni_range = 2.5
+omni_attenuation = 0.8
 
 [connection signal="body_entered" from="." to="." method="_on_body_entered"]
