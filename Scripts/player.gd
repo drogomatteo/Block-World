@@ -9,6 +9,7 @@ extends CharacterBody3D
 # et on applique les stats de CLASSES (class_id préréglé par la scène).
 
 const ARROW_SCENE := preload("res://Scènes/Objets/Arrow.tscn")
+const FIREBALL_SCENE := preload("res://Scènes/Objets/Fireball.tscn")
 
 const JUMP_VELOCITY := 6.5
 const AIM_RAY_LENGTH := 90.0 # portée du rayon de visée du réticule (tirs)
@@ -69,13 +70,13 @@ const CLASSES := {
 	"ranger": {
 		"name": "Rôdeur", "color": Color(0.22, 0.55, 0.28),
 		"health": 90, "damage": 22, "speed": 6.5, "attack_cooldown": 0.55,
-		"ranged": true, "projectile_speed": 26.0, "projectile_color": Color(0.45, 0.9, 0.35),
+		"ranged": true, "projectile_speed": 26.0, "projectile_type" : "arrow",
 		"special_name": "Salve", "special_cooldown": 4.0,
 	},
 	"mage": {
 		"name": "Mage", "color": Color(0.45, 0.25, 0.65),
 		"health": 80, "damage": 30, "speed": 6.0, "attack_cooldown": 0.7,
-		"ranged": true, "projectile_speed": 17.0, "projectile_color": Color(1.0, 0.55, 0.15),
+		"ranged": true, "projectile_speed": 17.0, "projectile_type" : "fireball",
 		"special_name": "Nova", "special_cooldown": 6.0,
 	},
 	"rogue": {
@@ -111,6 +112,7 @@ var special_cooldown := 5.0
 var special_timer := 0.0 # lu par world.gd pour la jauge du HUD
 var _ranged := false
 var _proj_speed := 40.0
+var _proj_type := "arrow" # "arrow" (balistique) ou "fireball" (tir tendu)
 var _attack_timer := 0.0
 
 var level := 1
@@ -162,6 +164,7 @@ func _ready() -> void:
 	special_cooldown = c["special_cooldown"]
 	_ranged = c["ranged"]
 	_proj_speed = c.get("projectile_speed", 20.0)
+	_proj_type = c.get("projectile_type", "arrow")
 	_recompute_stats()
 	health = max_health
 
@@ -490,14 +493,19 @@ func _aim_point() -> Vector3:
 
 # Tire un projectile VERS le point visé par le réticule (et non parallèle à
 # l'axe caméra : parti de la poitrine, un tir parallèle passait à côté de ce
-# que marquait le crosshair, surtout à courte portée).
+# que marquait le crosshair, surtout à courte portée). Selon projectile_type :
+# flèche = direction balistique (relevée pour compenser la chute, elle retombe
+# sur le crosshair) ; boule de feu = tir tendu, sans gravité.
 func _shoot(damage_mult: float, yaw_offset: float) -> void:
 	var start := global_position + Vector3(0, 1.2, 0)
-	var dir := (_aim_point() - start).normalized()
+	var aim := _aim_point()
+	var dir := (aim - start).normalized() if _proj_type == "fireball" \
+		else Arrow.ballistic_dir(start, aim, _proj_speed)
 	if yaw_offset != 0.0:
 		dir = dir.rotated(Vector3.UP, yaw_offset)
 	model.rotation.y = atan2(-dir.x, -dir.z) # le perso se tourne vers sa cible
-	var p := ARROW_SCENE.instantiate() as Arrow
+	var scene := FIREBALL_SCENE if _proj_type == "fireball" else ARROW_SCENE
+	var p := scene.instantiate()
 	p.setup(dir, _proj_speed, int(round(attack_damage * damage_mult)), "enemies", "player")
 	get_parent().add_child(p)
 	p.global_position = start + dir * 0.9 # sur la ligne de visée : même direction depuis la bouche du canon

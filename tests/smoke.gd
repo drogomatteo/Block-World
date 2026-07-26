@@ -78,7 +78,7 @@ func _run() -> void:
 			ei.free()
 	for sp in ["Monde/terrain_gen", "Monde/chunk", "Monde/day_night",
 			"UI/ui", "UI/main_menu", "UI/options_menu", "UI/inventory_ui",
-			"Objets/pickup", "Objets/projectile", "Objets/items"]:
+			"Objets/pickup", "Objets/Arrow", "Objets/Fireball", "Objets/items"]:
 		check(load("res://Scènes/%s.tscn" % sp) != null, "la scène %s.tscn se charge" % sp)
 
 	# --- Les scènes d'acteurs contiennent le MODÈLE et les ANIMATIONS ---
@@ -894,10 +894,10 @@ func _run() -> void:
 	world._on_player_died()
 	await physics_frame
 
-	# --- Tir dirigé vers le réticule ---
-	# Le projectile part de la poitrine VERS le point marqué par le crosshair
-	# (rayon caméra au centre de l'écran) — avant, il partait parallèle à l'axe
-	# caméra et ne croisait le réticule qu'à l'infini (parallaxe).
+	# --- Tir balistique dirigé vers le réticule ---
+	# La flèche part de la poitrine VERS le point marqué par le crosshair
+	# (rayon caméra au centre de l'écran), avec un angle relevé qui compense
+	# la chute (BULLET_DROP) : elle doit RETOMBER sur le point visé.
 	for i in 180:
 		await physics_frame
 		if player.is_on_floor():
@@ -916,19 +916,70 @@ func _run() -> void:
 	if not aim_hit.is_empty():
 		var old_projs := []
 		for chld in world.get_children():
-			if chld is Projectile:
+			if chld is Arrow:
 				old_projs.append(chld)
 		player._shoot(1.0, 0.0)
-		var proj: Projectile = null
+		var proj: Arrow = null
 		for chld in world.get_children():
-			if chld is Projectile and not (chld in old_projs):
+			if chld is Arrow and not (chld in old_projs):
 				proj = chld
-		check(proj != null, "projectile du joueur instancié")
+		check(proj != null, "flèche du joueur instanciée")
 		if proj != null:
+			# Le modèle Blender (30 cubes) est fusionné par tools/gen_arrow_mesh.gd
+			# en un seul maillage : 1 flèche = 1 draw call, pas 30.
+			var proj_mis := proj.find_children("*", "MeshInstance3D", true, false)
+			check(proj_mis.size() == 1 and proj_mis[0].mesh.get_surface_count() == 1,
+				"flèche = 1 seul MeshInstance3D à 1 surface (%d trouvés)" % proj_mis.size())
 			var want: Vector3 = (aim_hit["position"] - proj.global_position).normalized()
 			var aim_err := rad_to_deg(proj.velocity.normalized().angle_to(want))
-			check(aim_err < 2.0, "projectile dirigé vers le point du réticule (écart %.2f°)" % aim_err)
-			proj.queue_free()
+			check(aim_err < 5.0, "flèche tirée vers le point du réticule (écart %.2f°)" % aim_err)
+			check(proj.velocity.normalized().y >= want.y - 0.0001,
+				"la visée compense la chute (angle relevé par rapport à la ligne directe)")
+			# Vol réel : la flèche doit passer/retomber au point visé (elle se
+			# libère d'elle-même en touchant le décor à l'arrivée).
+			var closest := INF
+			for i in 300:
+				await physics_frame
+				if not is_instance_valid(proj):
+					break
+				closest = minf(closest, proj.global_position.distance_to(aim_hit["position"]))
+			check(closest < 0.8, "la flèche retombe sur le point visé (au plus près : %.2f m)" % closest)
+			if is_instance_valid(proj):
+				proj.queue_free()
+
+			# Boule de feu (mage) : tir TENDU vers le réticule, sans gravité,
+			# qui explose à l'impact (le signal body_entered doit être connecté
+			# dans la scène — sinon elle traverse tout sans dégâts).
+			player._proj_type = "fireball"
+			player._proj_speed = 17.0
+			player._shoot(1.0, 0.0)
+			var fb: Fireball = null
+			for chld in world.get_children():
+				if chld is Fireball:
+					fb = chld
+			check(fb != null, "boule de feu instanciée (projectile_type mage)")
+			if fb != null:
+				var fwant: Vector3 = (aim_hit["position"] - fb.global_position).normalized()
+				var ferr := rad_to_deg(fb.velocity.normalized().angle_to(fwant))
+				check(ferr < 0.5, "boule de feu tirée DROIT vers le réticule (écart %.2f°)" % ferr)
+				var fb_v0: Vector3 = fb.velocity
+				for i in 5:
+					await physics_frame
+				check(is_instance_valid(fb) and fb.velocity.is_equal_approx(fb_v0),
+					"la boule de feu vole sans gravité (vitesse constante)")
+				var fb_closest := INF
+				var fb_freed := false
+				for i in 180: # 3 s max, bien avant l'expiration de _life (4 s)
+					if not is_instance_valid(fb):
+						fb_freed = true
+						break
+					fb_closest = minf(fb_closest, fb.global_position.distance_to(aim_hit["position"]))
+					await physics_frame
+				check(fb_freed, "la boule de feu explose à l'impact (signal body_entered connecté)")
+				# Elle explose quand son BORD touche le décor : le centre s'arrête
+				# à ~rayon/sin(pente) du point visé (+1 frame de vol à 0.28 m).
+				check(fb_closest < 1.4, "la boule de feu frappe le point visé (au plus près : %.2f m)" % fb_closest)
+			player._proj_type = "arrow"
 	player.cam_pivot.rotation.x = 0.0
 
 	# --- Ennemis : archétypes, corps, agilité ---

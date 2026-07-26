@@ -1,0 +1,62 @@
+[gd_scene format=3 uid="uid://bw2t4m06kift1"]
+
+[ext_resource type="Script" uid="uid://ce0m731i1kn8v" path="res://Scripts/Fireball.gd" id="1_b04ph"]
+[ext_resource type="PackedScene" uid="uid://djsrf3cwbidcl" path="res://Assets/Fireball.glb" id="1_h8qwj"]
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_djwsi"]
+radius = 1.05
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ampda"]
+transparency = 1
+blend_mode = 1
+albedo_color = Color(1, 0.15686275, 0.078431375, 1)
+detail_enabled = true
+detail_blend_mode = 1
+billboard_mode = 3
+billboard_keep_scale = true
+particles_anim_h_frames = 1
+particles_anim_v_frames = 1
+particles_anim_loop = false
+
+[sub_resource type="QuadMesh" id="QuadMesh_rkiyi"]
+material = SubResource("StandardMaterial3D_ampda")
+size = Vector2(0.2, 0.2)
+
+[sub_resource type="Curve" id="Curve_b04ph"]
+_data = [Vector2(0, 0.8666667), 0.0, 0.0, 0, 0, Vector2(0.29838708, 0.98888886), 0.0, 0.0, 0, 0, Vector2(1, 0), -4.362962, 0.0, 0, 0]
+point_count = 3
+
+[node name="Fireball" type="Area3D" unique_id=1451681205]
+transform = Transform3D(0.2, 0, 0, 0, 0.2, 0, 0, 0, 0.2, 0, 0, 0)
+script = ExtResource("1_b04ph")
+
+[node name="Body" type="Node3D" parent="." unique_id=1259844279]
+
+[node name="Fireball" parent="Body" unique_id=32118770 instance=ExtResource("1_h8qwj")]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=373669191]
+shape = SubResource("SphereShape3D_djwsi")
+
+[node name="FireEffect" type="Node3D" parent="." unique_id=594808594]
+
+[node name="CPUParticles3D" type="CPUParticles3D" parent="FireEffect" unique_id=1786525639]
+amount = 15
+lifetime = 1.2
+randomness = 0.7
+mesh = SubResource("QuadMesh_rkiyi")
+emission_shape = 2
+emission_sphere_radius = 1.0
+direction = Vector3(0, 1, 0)
+gravity = Vector3(0, 0.2, 0)
+initial_velocity_min = 0.5
+initial_velocity_max = 1.2
+scale_amount_min = 0.5
+scale_amount_max = 1.5
+scale_amount_curve = SubResource("Curve_b04ph")
+
+[node name="OmniLight3D" type="OmniLight3D" parent="." unique_id=1049665430]
+light_color = Color(1, 0.23529412, 0.15686275, 1)
+omni_range = 1.0
+omni_attenuation = 0.7
+
+[connection signal="body_entered" from="." to="." method="_on_body_entered"]

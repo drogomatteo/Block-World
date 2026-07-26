@@ -361,7 +361,8 @@ func _try_shoot() -> void:
 	var pv: Vector3 = player.velocity if "velocity" in player else Vector3.ZERO
 	var flight_time := origin.distance_to(target) / ARROW_SPEED
 	target += Vector3(pv.x, 0.0, pv.z) * flight_time * 0.85
-	var dir := (target - origin).normalized()
+	# Direction balistique : compense la chute de la flèche jusqu'à la cible.
+	var dir := Arrow.ballistic_dir(origin, target, ARROW_SPEED)
 	# Recul du bras d'arc : clip du GearAnim.
 	if _gear_anim != null:
 		_gear_anim.stop()
