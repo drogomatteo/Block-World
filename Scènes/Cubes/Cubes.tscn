@@ -1,0 +1,12 @@
+[gd_scene format=3 uid="uid://b22unkntgqfav"]
+
+[ext_resource type="Material" uid="uid://dswn4tyxx6out" path="res://Ressource/Shader/block.tres" id="1_75q3j"]
+[ext_resource type="Script" uid="uid://dxycd844piqkt" path="res://Scripts/cubes.gd" id="1_s6ypx"]
+[ext_resource type="CompressedTexture2DArray" uid="uid://b4qhaqsxtqnve" path="res://Assets/Test.png" id="2_0em5i"]
+[ext_resource type="FastNoiseLite" uid="uid://d3qfqlk53vl4f" path="res://Ressource/Noise/hauteur.tres" id="3_3kcc4"]
+
+[node name="MeshInstance3D" type="MeshInstance3D" unique_id=2076952819]
+material_override = ExtResource("1_75q3j")
+script = ExtResource("1_s6ypx")
+atlas_texture = ExtResource("2_0em5i")
+noise = ExtResource("3_3kcc4")

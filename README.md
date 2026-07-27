@@ -9,7 +9,7 @@ Il s'agit d'un Action-RPG cubique. Plus tard, j'aimerais ajouter la possibilité
 ## Ligne de route
 
 - [ ] Amélioration graphique du jeu vidéo
-    - [x] Ajout de décoration (arbre, feuillages, rivières, etc)
+    - [ ] Ajout de décoration (arbre, feuillages, rivières, etc)
     - [ ] Création d'un personnage pour chaque classe
     - [ ] Création d'une texture pour les objets
     - [ ] Création des ennemies

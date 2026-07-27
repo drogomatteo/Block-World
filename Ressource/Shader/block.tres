@@ -1,0 +1,9 @@
+[gd_resource type="ShaderMaterial" format=3 uid="uid://dswn4tyxx6out"]
+
+[ext_resource type="Shader" uid="uid://defnfljwfm5ie" path="res://Ressource/Shader/blocks.gdshader" id="1_4frjl"]
+[ext_resource type="CompressedTexture2DArray" uid="uid://b4qhaqsxtqnve" path="res://Assets/Test.png" id="2_y2nur"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_4frjl")
+shader_parameter/tiles = ExtResource("2_y2nur")
