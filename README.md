@@ -20,7 +20,7 @@ Il s'agit d'un Action-RPG cubique. Plus tard, j'aimerais ajouter la possibilité
     - [ ] Ajout de structure
     - [ ] Possibilité de casser, exploiter et placer les cubes
     - [ ] Ajout du mode multijoueur
-    - [ ] Optimiser le jeu pour qu'il fonctionne sur un grille pain, sans forcément perdre la beauté du jeu.
+    - [x] Optimiser le jeu pour qu'il fonctionne sur un grille pain, sans forcément perdre la beauté du jeu.
 - [ ] Ajout d'un système de niveau
     - [ ] Ajout de compétences passives et actives liés aux classes (arbres de compétences)
     - [ ] Ajout de classes mineures dans la classe majeure
