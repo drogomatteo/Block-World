@@ -4,7 +4,7 @@ extends MeshInstance3D
 # la hauteur du terrain dans TerrainHeight (bruit up-samplé + cache), les
 # arbres dans TreeGen et le maillage dans ChunkMesher.
 
-static var block_material : StandardMaterial3D
+static var block_material : ShaderMaterial
 
 # Raccourcis vers la configuration et les tables partagées
 const width : int = WorldConfig.WIDTH
@@ -45,9 +45,9 @@ func apply_generated(chunk_data : ChunkData, generated_mesh : ArrayMesh) -> void
 		return
 
 	if block_material == null:
-		block_material = StandardMaterial3D.new()
-		block_material.vertex_color_use_as_albedo = true
-		block_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		block_material = ShaderMaterial.new()
+		block_material.shader = load("res://Ressource/Shaders/chunk.gdshader")
+		block_material.set_shader_parameter("block_size", WorldConfig.CUBE_SIZE)
 	generated_mesh.surface_set_material(0, block_material)
 	self.mesh = generated_mesh
 

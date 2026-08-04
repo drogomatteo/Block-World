@@ -1,10 +1,17 @@
 class_name ChunkMesher
 extends RefCounted
-# Construit le maillage d'un chunk à partir de ses données RLE (ChunkData),
-# en ne parcourant que la surface : le terrain plein n'expose que son dessus
-# et ses flancs (là où la colonne voisine est plus basse) ; seuls les blocs
-# d'arbre, rares, sont testés sur leurs 6 faces. Le volume n'est jamais
-# balayé, donc la hauteur du chunk n'a aucun coût.
+# Binary greedy mesher (d'après le « binary greedy mesher demo » de TanTanDev).
+# Le contenu RLE du chunk (ChunkData) est converti en masques de bits par
+# colonne : l'axe y tient dans des mots de 63 bits (le bit 63 reste libre car
+# >> est arithmétique en GDScript), bornés au plus haut bloc du chunk. Le
+# culling des faces se fait alors en quelques opérations binaires par colonne :
+#   dessus  = col & ~(col décalée vers le bas)
+#   dessous = col & ~(col décalée vers le haut)
+#   flanc   = col & ~(colonne voisine)
+# Les faces visibles sont ensuite regroupées en plans binaires 2D par
+# (direction, id de bloc, niveau) puis fusionnées en rectangles maximaux par
+# manipulation de bits (trailing zeros / trailing ones). Chaque rectangle
+# n'émet que 4 sommets et 6 indices : le maillage est indexé.
 
 const FACE_TOP := 0
 const FACE_BOTTOM := 1
@@ -17,8 +24,8 @@ const BLOCKS := {
 	3: {"name" : "Leaves", "solid" : true, "colors" : {FACE_TOP :Color(0.10, 0.55, 0.12, 1.0), FACE_BOTTOM : Color(0.10, 0.55, 0.12, 1.0), FACE_SIDE : Color(0.10, 0.55, 0.12, 1.0)}},
 }
 
+# L'ordre indexe les plans : 0 UP, 1 DOWN, 2 LEFT, 3 RIGHT, 4 FORWARD, 5 BACK
 const DIRECTIONS := [Vector3.UP, Vector3.DOWN, Vector3.LEFT, Vector3.RIGHT, Vector3.FORWARD, Vector3.BACK]
-const SIDE_DIRECTIONS := [Vector3.LEFT, Vector3.RIGHT, Vector3.FORWARD, Vector3.BACK]
 
 const FACE_SHADE := {
 	Vector3.UP: 1.0,
@@ -29,7 +36,8 @@ const FACE_SHADE := {
 	Vector3.BACK: 0.8,
 }
 
-# Coins de chaque face en demi-blocs, ordre = winding horaire vu de face
+# Coins de chaque face, ordre = winding horaire vu de face ; -1 devient le
+# bord min du rectangle sur cet axe, +1 le bord max.
 const FACE_CORNERS := {
 	Vector3.UP: [Vector3(-1, 1, -1), Vector3(1, 1, -1), Vector3(1, 1, 1), Vector3(-1, 1, 1)],
 	Vector3.DOWN: [Vector3(-1, -1, 1), Vector3(1, -1, 1), Vector3(1, -1, -1), Vector3(-1, -1, -1)],
@@ -39,9 +47,13 @@ const FACE_CORNERS := {
 	Vector3.BACK: [Vector3(-1, 1, 1), Vector3(1, 1, 1), Vector3(1, -1, 1), Vector3(-1, -1, 1)],
 }
 
+const BITS := 63                       # bits utiles par mot de colonne
+const MASK63 := 0x7FFFFFFFFFFFFFFF
+
 var _verts := PackedVector3Array()
 var _norms := PackedVector3Array()
 var _cols := PackedColorArray()
+var _idx := PackedInt32Array()
 var _shaded := {}  # couleurs pré-ombrées : _shaded[direction][id de bloc]
 
 static func build(data : ChunkData) -> ArrayMesh:
@@ -59,47 +71,108 @@ static func block_color_for_face(block_id : int, face_dir : Vector3) -> Color:
 	var shade : float = FACE_SHADE[face_dir]
 	return Color(color.r * shade, color.g * shade, color.b * shade, color.a)
 
+@warning_ignore("integer_division")
 func _build(data : ChunkData) -> ArrayMesh:
 	# extremity bound : chunk sans aucun bloc -> pas de maillage du tout
 	if data.top_solid_y < 0:
 		return null
 
+	# couleurs pré-ombrées ; l'alpha (inutilisé : matériau opaque) transporte
+	# l'id du bloc vers le shader (id / 255), qui ne teinte que l'herbe
 	for dir in DIRECTIONS:
-		_shaded[dir] = [Color(), block_color_for_face(1, dir), block_color_for_face(2, dir), block_color_for_face(3, dir)]
+		var shaded := [Color()]
+		for id in range(1, 4):
+			var c := block_color_for_face(id, dir)
+			c.a = id / 255.0
+			shaded.append(c)
+		_shaded[dir] = shaded
 
-	var height := WorldConfig.HEIGHT
+	var W := WorldConfig.WIDTH
+	var D := WorldConfig.DEPTH
+	var D2 := D + 2
+	var ncols := (W + 2) * D2
+	# nombre de mots par colonne : le bit b correspond à y = b - 1 (marge du
+	# dessous comprise), borné au plus haut bloc + 1 bit d'air au-dessus
+	var nw := ceili(float(data.top_solid_y + 2) / BITS)
+	var cap := nw * BITS
+	var run_data := data.run_data
+	var run_start := data.run_start
 
-	for x in range(WorldConfig.WIDTH):
-		for z in range(WorldConfig.DEPTH):
-			var top_y := mini(data.col_top(x, z), height - 1)
+	# --- 1. masques de solidité par colonne, directement depuis les plages RLE
+	var cols := PackedInt64Array()
+	cols.resize(ncols * nw)
+	for ci in range(ncols):
+		var i : int = run_start[ci]
+		var end : int = run_start[ci + 1]
+		var b := 0
+		var base := ci * nw
+		while i < end:
+			var l : int = run_data[i + 1]
+			if run_data[i] != 0:
+				var hi := mini(b + l, cap)
+				var s := b
+				while s < hi:
+					var w := s / BITS
+					var lo := s - w * BITS
+					var take := mini(BITS - lo, hi - s)
+					cols[base + w] |= _range_mask(lo, lo + take)
+					s += take
+			b += l
+			i += 2
 
-			# dessus (sauf si un tronc d'arbre est posé dessus)
-			if top_y >= 0 and data.block_at(x, top_y + 1, z) == 0:
-				_emit_face(Vector3.UP, x, top_y, z, 1)
-			# pas de faces du dessous : le terrain est plein jusqu'en bas
+	# --- 2. culling binaire + répartition des faces dans les plans 2D
+	var planes := [{}, {}, {}, {}, {}, {}]
+	var side_rows := data.top_solid_y + 1  # rangées y des plans latéraux
 
-			for dir in SIDE_DIRECTIONS:
-				var di := Vector3i(dir)
-				var n_top : int = data.col_top(x + di.x, z + di.z)
-				# flancs exposés : uniquement au-dessus du sommet de la
-				# colonne voisine (en dessous, le voisin est plein)
-				for y in range(maxi(n_top + 1, 0), top_y + 1):
-					if data.block_at(x + di.x, y, z + di.z) == 0:
-						_emit_face(dir, x, y, z, 1)
+	for x in range(W):
+		for z in range(D):
+			var ci := ChunkData.col_index(x, z)
+			var base := ci * nw
 
-	for pos in data.tree_blocks:
-		var lx : int = pos.x - data.chunk_position.x * WorldConfig.WIDTH
-		var ly : int = pos.y - data.chunk_position.y * height
-		var lz : int = pos.z - data.chunk_position.z * WorldConfig.DEPTH
-		if lx < 0 or lx >= WorldConfig.WIDTH or ly < 0 or ly >= height or lz < 0 or lz >= WorldConfig.DEPTH:
-			continue
-		var id := data.block_at(lx, ly, lz)
-		if id < 2:
-			continue  # emplacement finalement occupé par le terrain
-		for dir in DIRECTIONS:
-			var di := Vector3i(dir)
-			if data.block_at(lx + di.x, ly + di.y, lz + di.z) == 0:
-				_emit_face(dir, lx, ly, lz, id)
+			# plages solides de la colonne : [id, bit début, bit fin)
+			var runs := []
+			var i : int = run_start[ci]
+			var end : int = run_start[ci + 1]
+			var b := 0
+			while i < end:
+				var l : int = run_data[i + 1]
+				if run_data[i] != 0:
+					runs.append([run_data[i], b, b + l])
+				b += l
+				i += 2
+
+			var base_l := (ci - D2) * nw
+			var base_r := (ci + D2) * nw
+			var base_f := (ci - 1) * nw
+			var base_b := (ci + 1) * nw
+			var xbit := 1 << x
+			var zbit := 1 << z
+
+			for w in range(nw):
+				var c : int = cols[base + w]
+				if c == 0:
+					continue
+				# voisins verticaux de chaque bit, mot suivant / précédent inclus
+				var above : int = c >> 1
+				if w + 1 < nw:
+					above |= (cols[base + w + 1] & 1) << 62
+				var below : int = (c << 1) & MASK63
+				if w > 0:
+					below |= cols[base + w - 1] >> 62
+				# le bit 0 du mot 0 (y = -1) est la marge, jamais une face du chunk
+				var cut : int = ~1 if w == 0 else ~0
+				_scatter_y(planes[0], c & ~above & cut, w, runs, z, xbit)
+				_scatter_y(planes[1], c & ~below & cut, w, runs, z, xbit)
+				_scatter_side(planes[2], c & ~cols[base_l + w] & cut, w, runs, x, zbit, side_rows)
+				_scatter_side(planes[3], c & ~cols[base_r + w] & cut, w, runs, x, zbit, side_rows)
+				_scatter_side(planes[4], c & ~cols[base_f + w] & cut, w, runs, z, xbit, side_rows)
+				_scatter_side(planes[5], c & ~cols[base_b + w] & cut, w, runs, z, xbit, side_rows)
+
+	# --- 3. greedy meshing binaire de chaque plan, émission des rectangles
+	for d in range(6):
+		var dict : Dictionary = planes[d]
+		for key in dict:
+			_greedy_plane(d, key >> 2, key & 3, dict[key])
 
 	if _verts.is_empty():
 		return null
@@ -109,26 +182,136 @@ func _build(data : ChunkData) -> ArrayMesh:
 	arrays[Mesh.ARRAY_VERTEX] = _verts
 	arrays[Mesh.ARRAY_NORMAL] = _norms
 	arrays[Mesh.ARRAY_COLOR] = _cols
+	arrays[Mesh.ARRAY_INDEX] = _idx
 
+	# vertex packing natif : positions 16 bits normalisées sur l'AABB, normales
+	# octaédriques, couleurs RGBA8 — moitié moins de mémoire GPU par sommet
 	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {},
+		Mesh.ARRAY_FLAG_COMPRESS_ATTRIBUTES)
 	return mesh
 
-func _emit_face(dir : Vector3, x : int, y : int, z : int, id : int) -> void:
-	var corners : Array = FACE_CORNERS[dir]
-	var half := 0.5 * WorldConfig.CUBE_SIZE
-	var p := Vector3(x, y, z) * WorldConfig.CUBE_SIZE
-	var v0 : Vector3 = p + corners[0] * half
-	var v1 : Vector3 = p + corners[1] * half
-	var v2 : Vector3 = p + corners[2] * half
-	var v3 : Vector3 = p + corners[3] * half
-	_verts.push_back(v0)
-	_verts.push_back(v1)
-	_verts.push_back(v2)
-	_verts.push_back(v0)
-	_verts.push_back(v2)
-	_verts.push_back(v3)
+# Masque des bits [lo, hi) d'un mot, hi <= 63.
+static func _range_mask(lo : int, hi : int) -> int:
+	var mhi : int = MASK63 if hi == BITS else (1 << hi) - 1
+	return mhi & ~((1 << lo) - 1)
+
+# Faces UP / DOWN : un plan par y, rangée = z, bit = x.
+func _scatter_y(dict : Dictionary, m : int, w : int, runs : Array, z : int, xbit : int) -> void:
+	while m != 0:
+		var bit := w * BITS + _tz(m)
+		m &= m - 1
+		var key := ((bit - 1) << 2) | _id_at(runs, bit)
+		var rows = dict.get(key)
+		if rows == null:
+			rows = []
+			rows.resize(WorldConfig.DEPTH)
+			rows.fill(0)
+			dict[key] = rows
+		rows[z] |= xbit
+
+# Faces latérales : un plan par niveau (x ou z), rangée = y, bit = z ou x.
+func _scatter_side(dict : Dictionary, m : int, w : int, runs : Array, level : int, bitmask : int, nrows : int) -> void:
+	while m != 0:
+		var bit := w * BITS + _tz(m)
+		m &= m - 1
+		var key := (level << 2) | _id_at(runs, bit)
+		var rows = dict.get(key)
+		if rows == null:
+			rows = []
+			rows.resize(nrows)
+			rows.fill(0)
+			dict[key] = rows
+		rows[bit - 1] |= bitmask
+
+# Fusionne un plan binaire en rectangles maximaux : expansion en hauteur le
+# long des bits (trailing ones), puis en largeur sur les rangées suivantes
+# tant qu'elles contiennent le même motif (dont les bits sont alors éteints).
+func _greedy_plane(d : int, level : int, id : int, rows : Array) -> void:
+	var n := rows.size()
+	for r in range(n):
+		var y := 0
+		while true:
+			var rest : int = rows[r] >> y
+			if rest == 0:
+				break
+			y += _tz(rest)
+			var h := _tz(~(rows[r] >> y))
+			var h_mask : int = (1 << h) - 1
+			var clear : int = ~(h_mask << y)
+			var w := 1
+			while r + w < n:
+				if ((rows[r + w] >> y) & h_mask) != h_mask:
+					break
+				rows[r + w] &= clear
+				w += 1
+			_emit_quad(d, level, id, y, r, h, w)
+			y += h
+
+# Émet le rectangle couvrant les bits [b0, b0+h) des rangées [r0, r0+w) du
+# plan `level` de la direction d : 4 sommets + 6 indices.
+func _emit_quad(d : int, level : int, id : int, b0 : int, r0 : int, h : int, w : int) -> void:
+	var fp := level + 0.5 if (d == 0 or d == 3 or d == 5) else level - 0.5
+	var bmin := b0 - 0.5
+	var bmax := b0 + h - 0.5
+	var rmin := r0 - 0.5
+	var rmax := r0 + w - 0.5
+	var pmin : Vector3
+	var pmax : Vector3
+	match d:
+		0, 1:  # bits = x, rangées = z
+			pmin = Vector3(bmin, fp, rmin)
+			pmax = Vector3(bmax, fp, rmax)
+		2, 3:  # bits = z, rangées = y
+			pmin = Vector3(fp, rmin, bmin)
+			pmax = Vector3(fp, rmax, bmax)
+		4, 5:  # bits = x, rangées = y
+			pmin = Vector3(bmin, rmin, fp)
+			pmax = Vector3(bmax, rmax, fp)
+
+	var dir : Vector3 = DIRECTIONS[d]
+	var s := WorldConfig.CUBE_SIZE
+	var vbase := _verts.size()
 	var color : Color = _shaded[dir][id]
-	for i in range(6):
+	for corner in FACE_CORNERS[dir]:
+		_verts.push_back(Vector3(
+			(pmin.x if corner.x < 0 else pmax.x) * s,
+			(pmin.y if corner.y < 0 else pmax.y) * s,
+			(pmin.z if corner.z < 0 else pmax.z) * s))
 		_norms.push_back(dir)
 		_cols.push_back(color)
+	_idx.push_back(vbase)
+	_idx.push_back(vbase + 1)
+	_idx.push_back(vbase + 2)
+	_idx.push_back(vbase)
+	_idx.push_back(vbase + 2)
+	_idx.push_back(vbase + 3)
+
+# Id du bloc au bit donné d'après les plages solides de la colonne.
+static func _id_at(runs : Array, bit : int) -> int:
+	for r in runs:
+		if bit < r[2]:
+			return r[0] if bit >= r[1] else 0
+	return 0
+
+# Nombre de zéros de poids faible (v != 0).
+static func _tz(v : int) -> int:
+	var n := 0
+	if v & 0xFFFFFFFF == 0:
+		n = 32
+		v >>= 32
+	if v & 0xFFFF == 0:
+		n += 16
+		v >>= 16
+	if v & 0xFF == 0:
+		n += 8
+		v >>= 8
+	if v & 0xF == 0:
+		n += 4
+		v >>= 4
+	if v & 0x3 == 0:
+		n += 2
+		v >>= 2
+	if v & 0x1 == 0:
+		n += 1
+	return n
