@@ -1,38 +1,23 @@
 [gd_scene format=3 uid="uid://dkunb6ch24p5u"]
 
 [ext_resource type="Script" uid="uid://607y1r8gxj71" path="res://Scripts/main.gd" id="1_mijtf"]
-[ext_resource type="Script" uid="uid://lll311wdu3a5" path="res://Scripts/orbit_camera.gd" id="2_orbit"]
+[ext_resource type="Script" uid="uid://lll311wdu3a5" path="res://Scripts/fly_camera.gd" id="2_orbit"]
 
-[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_emxwr"]
-sky_top_color = Color(0.24, 0.42, 0.72, 1)
-sky_horizon_color = Color(0.78, 0.84, 0.9, 1)
-sky_curve = 0.04019142
-ground_bottom_color = Color(0.32, 0.36, 0.42, 1)
-ground_horizon_color = Color(0.78, 0.84, 0.9, 1)
-energy_multiplier = 0.8
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_ahwsu"]
 
-[sub_resource type="Sky" id="Sky_kh8mj"]
-sky_material = SubResource("ProceduralSkyMaterial_emxwr")
-radiance_size = 0
+[sub_resource type="Sky" id="Sky_24a1y"]
+sky_material = SubResource("ProceduralSkyMaterial_ahwsu")
 
-[sub_resource type="Environment" id="Environment_km2js"]
+[sub_resource type="Environment" id="Environment_rkiyi"]
 background_mode = 2
-sky = SubResource("Sky_kh8mj")
-tonemap_mode = 3
-fog_mode = 1
-fog_light_color = Color(0.78431374, 0.78431374, 0.78431374, 1)
-fog_sun_scatter = 0.3
-fog_density = 1.0
-fog_sky_affect = 0.2
-fog_depth_curve = 9.849161
-fog_depth_begin = 0.0
+sky = SubResource("Sky_24a1y")
 
 [node name="main" type="Node3D" unique_id=1020671658]
 script = ExtResource("1_mijtf")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1040298022]
-environment = SubResource("Environment_km2js")
-
 [node name="Camera3D" type="Camera3D" parent="." unique_id=1320169777]
-transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 70.777245, 0)
+transform = Transform3D(1, 0, 0, 0, 0.921061, 0.389418, 0, -0.389418, 0.921061, 0, 24, 0)
 script = ExtResource("2_orbit")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=130495272]
+environment = SubResource("Environment_rkiyi")
