@@ -1,0 +1,7 @@
+[gd_resource type="FastNoiseLite" format=3 uid="uid://cbiomemont01"]
+
+[resource]
+seed = 101
+frequency = 0.008
+fractal_type = 3
+fractal_octaves = 4

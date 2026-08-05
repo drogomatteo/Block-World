@@ -198,6 +198,33 @@ func _init() -> void:
 				border_ok = false
 	check("frontières cohérentes avec les voisins (est + dessus)", border_ok)
 
+	# --- LOD ---------------------------------------------------------------
+	# Aux pas 2 et 4 : maillage valide, nettement plus léger que le pas 1
+	# (pas forcément décroissant entre 2 et 4 : la quantification crée des
+	# marches), coordonnées sur la grille du pas et dans l'emprise du chunk.
+	var lod_ok := true
+	for lstep in [2, 4]:
+		var ld := ChunkData.new()
+		ld.build(chunk.noise, Vector3i(0, 0, 0), false, lstep)
+		var lmesh := ChunkMesher.build(ld)
+		if lmesh == null:
+			lod_ok = false
+			continue
+		var lv: PackedVector3Array = lmesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+		if lv.size() % 4 != 0 or lv.size() * 2 > verts.size():
+			lod_ok = false
+		var fs := float(lstep)
+		for v in lv:
+			if v.x < -fs or v.x > Chunk.width + fs or v.z < -fs or v.z > Chunk.depth + fs:
+				lod_ok = false
+				break
+			# sommets à la demi-cellule près (tolérance : compression 16 bits)
+			for c in [v.x / fs, v.y / fs, v.z / fs]:
+				var fr : float = absf(fposmod(c + 0.5, 1.0))
+				if minf(fr, 1.0 - fr) > 0.05:
+					lod_ok = false
+	check("LOD 2 et 4 : maillages valides, alignés, décroissants", lod_ok)
+
 	# --- Déterminisme ------------------------------------------------------
 	var chunk2 = load("res://Scènes/Cubes/Cubes.tscn").instantiate()
 	chunk2.chunk_position = Vector3i(0, 0, 0)

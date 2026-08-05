@@ -1,0 +1,6 @@
+[gd_resource type="FastNoiseLite" format=3 uid="uid://cbiomeocean1"]
+
+[resource]
+seed = 104
+frequency = 0.005
+fractal_octaves = 3

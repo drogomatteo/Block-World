@@ -88,9 +88,51 @@ var _shaded := {}  # couleurs pré-ombrées : _shaded[direction][id de bloc]
 var _ring := [0, 0, 0, 0, 0, 0, 0, 0]  # solidité des 8 voisins (réutilisé)
 var _yoff : Array   # décalage (en mots) des 8 colonnes voisines, faces y
 var _soff : Array   # par direction latérale : décalages des 3 colonnes du plan
+var _dcells : int   # profondeur de la grille en cellules (rangées des plans y)
+var _cell : float   # taille d'une cellule en mètres (CUBE_SIZE * pas de LOD)
+
+# Mode vertex pulling : les rectangles sont encodés au lieu d'émettre des
+# sommets. Encodage (LSB d'abord) :
+#   mot 0 : d(3) | flip(1) | id(2) | ao(8) | niveau(8) | b0(5)
+#   mot 1 : r0(8) | h-1(5) | w-1(8)
+var _packed_mode := false
+var _packed := PackedByteArray()
+var _quad_count := 0
 
 static func build(data : ChunkData) -> ArrayMesh:
-	return ChunkMesher.new()._build(data)
+	var m := ChunkMesher.new()
+	if not m._run(data) or m._verts.is_empty():
+		return null
+
+	var arrays = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = m._verts
+	arrays[Mesh.ARRAY_NORMAL] = m._norms
+	arrays[Mesh.ARRAY_COLOR] = m._cols
+	arrays[Mesh.ARRAY_TEX_UV] = m._uvs  # UV.x = facteur de lumière AO du coin
+	arrays[Mesh.ARRAY_INDEX] = m._idx
+
+	# vertex packing natif : positions 16 bits normalisées sur l'AABB, normales
+	# octaédriques, couleurs RGBA8 — moitié moins de mémoire GPU par sommet
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {},
+		Mesh.ARRAY_FLAG_COMPRESS_ATTRIBUTES)
+	return mesh
+
+# Vertex pulling : mêmes phases de culling/greedy, mais chaque rectangle est
+# ENCODÉ en 8 octets (2 mots u32) au lieu d'émettre des sommets — le vertex
+# shader de chunk_pulled.gdshader les décode depuis une texture de données.
+# Renvoie {count, image} (image RGBA8 de 512 texels de large : 256 rects par
+# ligne, dernière ligne complétée de zéros) ; {count: 0} si chunk vide.
+static func build_packed(data : ChunkData) -> Dictionary:
+	var m := ChunkMesher.new()
+	m._packed_mode = true
+	if not m._run(data) or m._quad_count == 0:
+		return {"count": 0}
+	var rows := ceili(m._quad_count / 256.0)
+	m._packed.resize(rows * 2048)
+	var img := Image.create_from_data(512, rows, false, Image.FORMAT_RGBA8, m._packed)
+	return {"count": m._quad_count, "image": img}
 
 static func block_color_for_face(block_id : int, face_dir : Vector3) -> Color:
 	var colors = BLOCKS[block_id]["colors"]
@@ -105,10 +147,10 @@ static func block_color_for_face(block_id : int, face_dir : Vector3) -> Color:
 	return Color(color.r * shade, color.g * shade, color.b * shade, color.a)
 
 @warning_ignore("integer_division")
-func _build(data : ChunkData) -> ArrayMesh:
+func _run(data : ChunkData) -> bool:
 	# extremity bound : chunk sans aucun bloc -> pas de maillage du tout
 	if data.top_solid_y < 0:
-		return null
+		return false
 
 	# couleurs pré-ombrées ; l'alpha (inutilisé : matériau opaque) transporte
 	# l'id du bloc vers le shader (id / 255), qui ne teinte que l'herbe
@@ -120,9 +162,13 @@ func _build(data : ChunkData) -> ArrayMesh:
 			shaded.append(c)
 		_shaded[dir] = shaded
 
-	var W := WorldConfig.WIDTH
-	var D := WorldConfig.DEPTH
-	var D2 := D + 2
+	# grille en cellules : au pas de LOD 1, cellule = bloc ; au-delà, le même
+	# pipeline maille une grille réduite et les sommets sont mis à l'échelle
+	var W := data.w_cells
+	var D := data.d_cells
+	var D2 := data.d2
+	_dcells = D
+	_cell = WorldConfig.CUBE_SIZE * data.step
 	var ncols := (W + 2) * D2
 	# nombre de mots par colonne : le bit b correspond à y = b - 1 (marge du
 	# dessous comprise), borné au plus haut bloc + 1 bit d'air au-dessus
@@ -168,7 +214,7 @@ func _build(data : ChunkData) -> ArrayMesh:
 
 	for x in range(W):
 		for z in range(D):
-			var ci := ChunkData.col_index(x, z)
+			var ci := (x + 1) * D2 + (z + 1)
 			var base := ci * nw
 
 			# plages solides de la colonne : [id, bit début, bit fin)
@@ -216,23 +262,7 @@ func _build(data : ChunkData) -> ArrayMesh:
 		for key in dict:
 			_greedy_plane(d, key >> 10, (key >> 2) & 0xFF, key & 3, dict[key])
 
-	if _verts.is_empty():
-		return null
-
-	var arrays = []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = _verts
-	arrays[Mesh.ARRAY_NORMAL] = _norms
-	arrays[Mesh.ARRAY_COLOR] = _cols
-	arrays[Mesh.ARRAY_TEX_UV] = _uvs  # UV.x = facteur de lumière AO du coin
-	arrays[Mesh.ARRAY_INDEX] = _idx
-
-	# vertex packing natif : positions 16 bits normalisées sur l'AABB, normales
-	# octaédriques, couleurs RGBA8 — moitié moins de mémoire GPU par sommet
-	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {},
-		Mesh.ARRAY_FLAG_COMPRESS_ATTRIBUTES)
-	return mesh
+	return true
 
 # Masque des bits [lo, hi) d'un mot, hi <= 63.
 static func _range_mask(lo : int, hi : int) -> int:
@@ -263,7 +293,7 @@ func _scatter_y(dict : Dictionary, m : int, w : int, runs : Array, z : int, xbit
 		var rows = dict.get(key)
 		if rows == null:
 			rows = []
-			rows.resize(WorldConfig.DEPTH)
+			rows.resize(_dcells)
 			rows.fill(0)
 			dict[key] = rows
 		rows[z] |= xbit
@@ -335,6 +365,17 @@ func _greedy_plane(d : int, level : int, ao : int, id : int, rows : Array) -> vo
 # Émet le rectangle couvrant les bits [b0, b0+h) des rangées [r0, r0+w) du
 # plan `level` de la direction d : 4 sommets + 6 indices.
 func _emit_quad(d : int, level : int, ao : int, id : int, b0 : int, r0 : int, h : int, w : int) -> void:
+	if _packed_mode:
+		var f0 := ao & 3
+		var f2 := (ao >> 4) & 3
+		var flip := 1 if f0 + f2 > ((ao >> 2) & 3) + ((ao >> 6) & 3) else 0
+		var o := _quad_count * 8
+		_packed.resize(o + 8)
+		_packed.encode_u32(o, d | (flip << 3) | (id << 4) | (ao << 6) | (level << 14) | (b0 << 22))
+		_packed.encode_u32(o + 4, r0 | ((h - 1) << 8) | ((w - 1) << 13))
+		_quad_count += 1
+		return
+
 	var fp := level + 0.5 if (d == 0 or d == 3 or d == 5) else level - 0.5
 	var bmin := b0 - 0.5
 	var bmax := b0 + h - 0.5
@@ -354,7 +395,7 @@ func _emit_quad(d : int, level : int, ao : int, id : int, b0 : int, r0 : int, h 
 			pmax = Vector3(bmax, rmax, fp)
 
 	var dir : Vector3 = DIRECTIONS[d]
-	var s := WorldConfig.CUBE_SIZE
+	var s := _cell
 	var vbase := _verts.size()
 	var color : Color = _shaded[dir][id]
 	for corner in FACE_CORNERS[dir]:

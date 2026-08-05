@@ -6,33 +6,52 @@ extends RefCounted
 # plage est de l'air : la colonne est « coupée » à son dernier bloc plein
 # (extremity bound), donc un chunk de hauteur 256 ne stocke que ses ~20
 # premiers mètres. Un chunk sans aucun bloc a des colonnes vides.
+#
+# LOD : au pas `step` (1, 2, 4…), la grille est en CELLULES de step³ blocs
+# (toutes les coordonnées locales de cette classe sont alors en cellules).
+# Une cellule prend le MAX des 4 coins de hauteur : le terrain grossier
+# enveloppe le fin, les raccords entre niveaux se recouvrent au lieu de se
+# fissurer. Les colonnes de marge restent VIDES quand step > 1 : le mesher
+# émet alors tous les murs de bordure, ce qui bouche les fissures restantes
+# (surcoût invisible, les murs sont enfouis chez le voisin). Pas d'arbres
+# au-delà du pas 1.
 
 const W : int = WorldConfig.WIDTH
 const H : int = WorldConfig.HEIGHT
 const D : int = WorldConfig.DEPTH
-const D2 : int = D + 2
 
 var chunk_position : Vector3i
+var step : int = 1          # taille d'une cellule en blocs (LOD)
+var w_cells : int = W       # dimensions de la grille en cellules
+var h_cells : int = H
+var d_cells : int = D
+var d2 : int = D + 2
 # Toutes les plages bout à bout ; run_start[ci] .. run_start[ci+1] délimite
 # les paires [id, longueur] de la colonne ci.
 var run_data : PackedInt32Array = PackedInt32Array()
 var run_start : PackedInt32Array = PackedInt32Array()
 var col_tops : PackedInt32Array = PackedInt32Array()  # sommet local du terrain par colonne, marge comprise
 var tree_blocks : Dictionary = {}
-var top_solid_y : int = -1  # plus haut y local occupé (terrain ou arbre), marge comprise
+var top_solid_y : int = -1  # plus haute cellule locale occupée (terrain ou arbre), marge comprise
 
-static func col_index(x : int, z : int) -> int:
-	return (x + 1) * D2 + (z + 1)
+func col_index(x : int, z : int) -> int:
+	return (x + 1) * d2 + (z + 1)
 
-func build(noise : FastNoiseLite, position : Vector3i, with_trees : bool) -> void:
+@warning_ignore("integer_division")
+func build(noise : FastNoiseLite, position : Vector3i, with_trees : bool, lod_step : int = 1) -> void:
 	chunk_position = position
-	col_tops.resize((W + 2) * D2)
-	run_start.resize((W + 2) * D2 + 1)
+	step = lod_step
+	w_cells = W / step
+	h_cells = H / step
+	d_cells = D / step
+	d2 = d_cells + 2
+	col_tops.resize((w_cells + 2) * d2)
+	run_start.resize((w_cells + 2) * d2 + 1)
 	run_data.clear()
 	top_solid_y = -1
 	var base_y := position.y * H
 
-	tree_blocks = TreeGen.compute_tree_blocks(noise, position) if with_trees else {}
+	tree_blocks = TreeGen.compute_tree_blocks(noise, position) if (with_trees and step == 1) else {}
 
 	# blocs d'arbre regroupés par colonne : Vector2i(y local, id)
 	var tree_cols := {}
@@ -47,14 +66,29 @@ func build(noise : FastNoiseLite, position : Vector3i, with_trees : bool) -> voi
 			tree_cols[ci].append(Vector2i(ly, tree_blocks[pos]))
 
 	var ci := 0
-	for x in range(-1, W + 1):
-		for z in range(-1, D + 1):
+	for x in range(-1, w_cells + 1):
+		for z in range(-1, d_cells + 1):
 			run_start[ci] = run_data.size()
-			var gx := position.x * W + x
-			var gz := position.z * D + z
-			var terrain_top := TerrainHeight.height_at(noise, gx, gz) - base_y
+			# LOD : marges vides -> le mesher émet tous les murs de bordure
+			if step > 1 and (x < 0 or x >= w_cells or z < 0 or z >= d_cells):
+				col_tops[ci] = -2
+				ci += 1
+				continue
+			var gx := position.x * W + x * step
+			var gz := position.z * D + z * step
+			var terrain_top : int
+			if step == 1:
+				terrain_top = TerrainHeight.height_at(noise, gx, gz) - base_y
+			else:
+				# max des 4 coins de la cellule, arrondi au nombre de cellules
+				var h := maxi(
+					maxi(TerrainHeight.height_at(noise, gx, gz),
+						TerrainHeight.height_at(noise, gx + step, gz)),
+					maxi(TerrainHeight.height_at(noise, gx, gz + step),
+						TerrainHeight.height_at(noise, gx + step, gz + step)))
+				terrain_top = roundi(float(h - base_y + 1) / step) - 1
 			col_tops[ci] = terrain_top
-			var t := mini(terrain_top, H - 1)
+			var t := mini(terrain_top, h_cells - 1)
 
 			if not tree_cols.has(ci):
 				# colonne pleine du pied (y = -1) au sommet du terrain
@@ -70,7 +104,7 @@ func build(noise : FastNoiseLite, position : Vector3i, with_trees : bool) -> voi
 			ci += 1
 	run_start[ci] = run_data.size()
 
-	top_solid_y = mini(top_solid_y, H - 1)
+	top_solid_y = mini(top_solid_y, h_cells - 1)
 
 # Colonne mixte terrain + arbre : reconstruite dans un petit tampon borné au
 # plus haut bloc, puis encodée en plages. Renvoie le dernier y plein.
@@ -105,7 +139,8 @@ func _encode_column_with_trees(terrain_top : int, cells : Array) -> int:
 		return span_top - trimmed
 	return span_top
 
-# Id du bloc en (x, y, z) locaux, marge -1..taille comprise ; 0 = air.
+# Id du bloc en (x, y, z) locaux (en CELLULES au pas du LOD), marge -1..taille
+# comprise ; 0 = air.
 func block_at(x : int, y : int, z : int) -> int:
 	var ci := col_index(x, z)
 	var i := run_start[ci]

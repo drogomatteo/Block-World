@@ -5,6 +5,15 @@ extends MeshInstance3D
 # arbres dans TreeGen et le maillage dans ChunkMesher.
 
 static var block_material : ShaderMaterial
+static var pulled_shader : Shader
+static var show_borders : bool = false  # état F3, appliqué aux nouveaux matériaux
+
+# Maillages « compteurs » du vertex pulling, PARTAGÉS entre tous les chunks :
+# 4 sommets à zéro + 6 indices par rectangle, le vertex shader reconstruit la
+# géométrie depuis la texture de données. Paliers pour ne pas payer le pire
+# cas partout ; un chunk prend le plus petit palier suffisant.
+static var _counter_meshes : Dictionary = {}
+const BUCKETS := [64, 256, 1024, 4096, 16320]
 
 # Raccourcis vers la configuration et les tables partagées
 const width : int = WorldConfig.WIDTH
@@ -17,6 +26,10 @@ const DIRECTIONS := ChunkMesher.DIRECTIONS
 var chunk_position : Vector3i
 @export var noise : FastNoiseLite
 @export var generate_trees : bool = true
+# Rendu par vertex pulling (texture de rectangles + maillage compteur) au lieu
+# d'un ArrayMesh par chunk. Le chemin classique reste disponible (flag off,
+# et generate_chunk() des tests l'utilise toujours).
+@export var vertex_pulling : bool = true
 
 var data : ChunkData
 var cube_mesh : ArrayMesh
@@ -51,6 +64,72 @@ func apply_generated(chunk_data : ChunkData, generated_mesh : ArrayMesh) -> void
 		block_material.set_shader_parameter("chunk_span", WorldConfig.WIDTH * WorldConfig.CUBE_SIZE)
 	generated_mesh.surface_set_material(0, block_material)
 	self.mesh = generated_mesh
+
+# Chemin vertex pulling : le chunk reçoit un maillage compteur partagé et un
+# matériau à lui (la texture de rectangles est par chunk — les uniforms
+# par-instance de Godot n'acceptent pas les sampler2D). packed vient de
+# ChunkMesher.build_packed : {count, image}.
+func apply_generated_packed(chunk_data : ChunkData, packed : Dictionary) -> void:
+	data = chunk_data
+	cube_mesh = null
+	var count : int = packed["count"]
+	if count == 0:
+		self.mesh = null
+		return
+	if count > BUCKETS[-1]:
+		# chunk plus dense que le plus grand palier : repli classique (rare)
+		apply_generated(chunk_data, ChunkMesher.build(chunk_data))
+		return
+
+	if pulled_shader == null:
+		pulled_shader = load("res://Ressource/Shaders/chunk_pulled.gdshader")
+	var mat := ShaderMaterial.new()
+	mat.shader = pulled_shader
+	mat.set_shader_parameter("rect_data", ImageTexture.create_from_image(packed["image"]))
+	mat.set_shader_parameter("quad_count", count)
+	mat.set_shader_parameter("cell_size", WorldConfig.CUBE_SIZE * chunk_data.step)
+	mat.set_shader_parameter("block_size", WorldConfig.CUBE_SIZE)
+	mat.set_shader_parameter("chunk_span", WorldConfig.WIDTH * WorldConfig.CUBE_SIZE)
+	if show_borders:
+		mat.set_shader_parameter("show_chunk_borders", true)
+	material_override = mat
+	self.mesh = _counter_mesh(count)
+	# les sommets du maillage compteur sont tous à zéro : l'AABB de culling
+	# doit couvrir l'emprise réelle du chunk
+	custom_aabb = AABB(Vector3(-2, -2, -2),
+		Vector3(width + 4, height + 4, depth + 4) * cube_size)
+
+# Plus petit maillage compteur couvrant `count` rectangles (créé à la demande,
+# thread principal uniquement).
+static func _counter_mesh(count : int) -> ArrayMesh:
+	var size : int = BUCKETS[-1]
+	for b in BUCKETS:
+		if count <= b:
+			size = b
+			break
+	if _counter_meshes.has(size):
+		return _counter_meshes[size]
+	var verts := PackedVector3Array()
+	verts.resize(size * 4)  # tous à zéro : seule l'identité VERTEX_ID compte
+	var idx := PackedInt32Array()
+	idx.resize(size * 6)
+	for q in range(size):
+		var v := q * 4
+		var i := q * 6
+		idx[i] = v
+		idx[i + 1] = v + 1
+		idx[i + 2] = v + 2
+		idx[i + 3] = v
+		idx[i + 4] = v + 2
+		idx[i + 5] = v + 3
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_counter_meshes[size] = mesh
+	return mesh
 
 func block_at(x : int, y : int, z : int) -> int:
 	return data.block_at(x, y, z)

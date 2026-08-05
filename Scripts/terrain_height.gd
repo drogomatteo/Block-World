@@ -1,11 +1,14 @@
 class_name TerrainHeight
 # Hauteur du terrain avec deux optimisations :
-# - up-sampling : le bruit n'est échantillonné que tous les NOISE_STEP blocs,
-#   les colonnes intermédiaires sont interpolées bilinéairement ;
+# - up-sampling : la hauteur n'est échantillonnée que tous les NOISE_STEP
+#   blocs, les colonnes intermédiaires sont interpolées bilinéairement ;
 # - cache : les échantillons sont mémorisés dans un cache statique partagé
 #   par tous les chunks (les voisins retombent sur les mêmes points).
-# Le résultat reste une fonction pure de (seed, gx, gz) : deux chunks qui
-# évaluent la même colonne obtiennent toujours la même hauteur.
+# La hauteur d'un échantillon vient de BiomeMap (mélange Worley des biomes,
+# déjà en blocs) ; le paramètre `noise` ne sert plus que de porteur du seed
+# monde (et d'invalidation du cache). Le résultat reste une fonction pure de
+# (seed, gx, gz) : deux chunks qui évaluent la même colonne obtiennent
+# toujours la même hauteur.
 
 const STEP : int = WorldConfig.NOISE_STEP
 
@@ -14,8 +17,9 @@ static var _cache_seed : int = 0
 static var _cache_ready : bool = false
 
 static func height_at(noise : FastNoiseLite, gx : int, gz : int) -> int:
-	return int(remap(noise_at(noise, gx, gz), -1.0, 1.0, WorldConfig.MIN_H, WorldConfig.MAX_H))
+	return int(noise_at(noise, gx, gz))
 
+# Hauteur interpolée (en blocs, flottante) — le nom historique est resté.
 static func noise_at(noise : FastNoiseLite, gx : int, gz : int) -> float:
 	var cx := floori(float(gx) / STEP)
 	var cz := floori(float(gz) / STEP)
@@ -35,6 +39,6 @@ static func _sample(noise : FastNoiseLite, cx : int, cz : int) -> float:
 	var key := Vector2i(cx, cz)
 	var value = _cache.get(key)
 	if value == null:
-		value = noise.get_noise_2d(cx * STEP, cz * STEP)
+		value = BiomeMap.height_sample(noise.seed, cx * STEP, cz * STEP)
 		_cache[key] = value
 	return value

@@ -1,0 +1,5 @@
+[gd_resource type="FastNoiseLite" format=3 uid="uid://cbiomeplain1"]
+
+[resource]
+seed = 102
+frequency = 0.01

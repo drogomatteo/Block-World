@@ -11,6 +11,14 @@ const CHUNCK_SCENE = preload("res://Scènes/Cubes/Cubes.tscn")
 @export var view_radius : int = 15
 @export var chunks_per_frame : int = 4  # maximum de chunks instanciés par frame
 
+# LOD : pas du voxel selon la distance (en chunks) — cellules de 1 bloc
+# jusqu'à lod1_radius, de 2 jusqu'à lod2_radius, de 4 au-delà (la transition
+# 2 -> 4 se fait dans le brouillard). Un chunk qui change d'anneau est
+# régénéré par le thread puis REMPLACÉ à l'arrivée du résultat : l'ancien
+# maillage reste affiché entre-temps, jamais de trou.
+@export var lod1_radius : int = 8
+@export var lod2_radius : int = 12
+
 # Brouillard dynamique : opaque juste avant le chunk MANQUANT le plus proche
 # de la caméra (pas au rayon visé) — il colle à la frontière de génération au
 # chargement ou en vol rapide, puis s'ouvre quand elle s'éloigne.
@@ -21,6 +29,7 @@ const CHUNCK_SCENE = preload("res://Scènes/Cubes/Cubes.tscn")
 
 var chunks : Dictionary = {}          # Vector2i(cx, cz) -> Chunk
 var last_center := Vector2i(1 << 30, 0)
+var _steps : Dictionary = {}          # Vector2i -> pas de LOD du chunk instancié
 
 var _env : Environment
 var _chunks_dirty := true   # l'ensemble des chunks a changé -> recalculer la frontière
@@ -36,6 +45,7 @@ var _done : Array = []      # résultats prêts : [position, ChunkData, ArrayMes
 var _quit := false
 var _noise : FastNoiseLite
 var _with_trees : bool = true
+var _pulling : bool = true  # vertex pulling (cf. Chunk.vertex_pulling)
 
 func _ready() -> void:
 	RenderingServer.set_debug_generate_wireframes(true)
@@ -59,6 +69,7 @@ func _ready() -> void:
 	var template = CHUNCK_SCENE.instantiate()
 	_noise = template.noise
 	_with_trees = template.generate_trees
+	_pulling = template.vertex_pulling
 	template.free()
 	_thread = Thread.new()
 	_thread.start(_worker_loop)
@@ -90,17 +101,20 @@ func recenter(center : Vector2i) -> void:
 		if (pos - center).length_squared() > keep:
 			chunks[pos].queue_free()
 			chunks.erase(pos)
+			_steps.erase(pos)
 
 	# _scan_offsets est déjà trié proche d'abord ; on ne génère que le disque
 	# de view_radius (l'anneau au-delà n'est gardé que par l'hystérésis).
+	# Un chunk présent au mauvais pas de LOD est re-demandé, pas déchargé.
 	var wanted : Array = []
 	var inner := view_radius * view_radius
 	for o in _scan_offsets:
 		if o.length_squared() > inner:
 			break
 		var pos : Vector2i = center + o
-		if not chunks.has(pos):
-			wanted.append(pos)
+		var want := _desired_step(o)
+		if not chunks.has(pos) or _steps.get(pos, 0) != want:
+			wanted.append([pos, want])
 
 	# remplace la file du thread : l'ordre redevient « proche d'abord » et les
 	# positions sorties du disque ne seront jamais générées
@@ -122,14 +136,31 @@ func _collect_results() -> void:
 	var keep := (view_radius + 1) * (view_radius + 1)
 	for r in results:
 		var pos : Vector2i = r[0]
-		if chunks.has(pos) or (pos - last_center).length_squared() > keep:
-			continue  # doublon, ou sorti du disque pendant la génération
+		var r_step : int = r[1]
+		if (pos - last_center).length_squared() > keep:
+			continue  # sorti du disque pendant la génération
+		var want := _desired_step(pos - last_center)
+		if chunks.has(pos):
+			if _steps.get(pos, 0) == r_step or r_step != want:
+				continue  # doublon, ou changement de LOD devenu périmé
+			chunks[pos].queue_free()  # remplacement de LOD : l'ancien couvrait jusqu'ici
+		elif r_step != want:
+			# résultat d'un LOD périmé mais mieux qu'un trou : on l'affiche et
+			# on redemande tout de suite le bon pas
+			_mutex.lock()
+			_work.push_front([pos, want])
+			_mutex.unlock()
+			_sem.post()
 		var chunk = CHUNCK_SCENE.instantiate()
 		chunk.chunk_position = Vector3i(pos.x, 0, pos.y)
 		chunk.position = Vector3(pos.x * Chunk.width, 0, pos.y * Chunk.depth) * Chunk.cube_size
 		add_child(chunk)
-		chunk.apply_generated(r[1], r[2])
+		if r[3] is Dictionary:
+			chunk.apply_generated_packed(r[2], r[3])
+		else:
+			chunk.apply_generated(r[2], r[3])
 		chunks[pos] = chunk
+		_steps[pos] = r_step
 		_chunks_dirty = true
 
 # Vise la frontière moins une marge de 1,5 chunk (caméra excentrée dans son
@@ -147,6 +178,15 @@ func _update_fog(delta: float) -> void:
 	end = move_toward(end, target, speed * delta)
 	_env.fog_depth_end = end
 	_env.fog_depth_begin = end * 0.5
+
+# Pas de LOD voulu pour un chunk à l'offset o du centre.
+func _desired_step(o : Vector2i) -> int:
+	var d2 := o.length_squared()
+	if d2 <= lod1_radius * lod1_radius:
+		return 1
+	if d2 <= lod2_radius * lod2_radius:
+		return 2
+	return 4
 
 # Distance (en chunks) entre le centre et le chunk absent le plus proche.
 # Le balayage suit _scan_offsets (proches d'abord) ; l'anneau au-delà de
@@ -166,17 +206,19 @@ func _worker_loop() -> void:
 		if _quit:
 			_mutex.unlock()
 			return
-		var pos = _work.pop_front() if not _work.is_empty() else null
+		var item = _work.pop_front() if not _work.is_empty() else null
 		_mutex.unlock()
-		if pos == null:
+		if item == null:
 			continue
 
+		var pos : Vector2i = item[0]
+		var lod : int = item[1]
 		var data := ChunkData.new()
-		data.build(_noise, Vector3i(pos.x, 0, pos.y), _with_trees)
-		var mesh := ChunkMesher.build(data)
+		data.build(_noise, Vector3i(pos.x, 0, pos.y), _with_trees, lod)
+		var result = ChunkMesher.build_packed(data) if _pulling else ChunkMesher.build(data)
 
 		_mutex.lock()
-		_done.append([pos, data, mesh])
+		_done.append([pos, lod, data, result])
 		_mutex.unlock()
 
 func _input(event: InputEvent) -> void:
@@ -191,6 +233,12 @@ func _input(event: InputEvent) -> void:
 			KEY_F2:
 				_env.fog_enabled = not _env.fog_enabled
 			KEY_F3:
+				# état porté par Chunk.show_borders : le matériau partagé du
+				# chemin classique + le matériau par chunk du vertex pulling
+				# (y compris ceux créés après l'appui, via apply_generated_packed)
+				Chunk.show_borders = not Chunk.show_borders
 				if Chunk.block_material != null:
-					Chunk.block_material.set_shader_parameter("show_chunk_borders",
-						not Chunk.block_material.get_shader_parameter("show_chunk_borders"))
+					Chunk.block_material.set_shader_parameter("show_chunk_borders", Chunk.show_borders)
+				for c in chunks.values():
+					if c.material_override is ShaderMaterial:
+						c.material_override.set_shader_parameter("show_chunk_borders", Chunk.show_borders)
