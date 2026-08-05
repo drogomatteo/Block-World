@@ -4,6 +4,8 @@
 [ext_resource type="Script" uid="uid://lll311wdu3a5" path="res://Scripts/fly_camera.gd" id="2_orbit"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_ahwsu"]
+ground_bottom_color = Color(0.6463, 0.6558, 0.6708, 1)
+ground_horizon_color = Color(0.6463, 0.6558, 0.6708, 1)
 
 [sub_resource type="Sky" id="Sky_24a1y"]
 sky_material = SubResource("ProceduralSkyMaterial_ahwsu")
@@ -11,6 +13,12 @@ sky_material = SubResource("ProceduralSkyMaterial_ahwsu")
 [sub_resource type="Environment" id="Environment_rkiyi"]
 background_mode = 2
 sky = SubResource("Sky_24a1y")
+fog_enabled = true
+fog_mode = 1
+fog_light_color = Color(0.6463, 0.6558, 0.6708, 1)
+fog_sky_affect = 0.0
+fog_depth_begin = 232.0
+fog_depth_end = 464.0
 
 [node name="main" type="Node3D" unique_id=1020671658]
 script = ExtResource("1_mijtf")

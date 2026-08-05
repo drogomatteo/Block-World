@@ -48,6 +48,7 @@ func apply_generated(chunk_data : ChunkData, generated_mesh : ArrayMesh) -> void
 		block_material = ShaderMaterial.new()
 		block_material.shader = load("res://Ressource/Shaders/chunk.gdshader")
 		block_material.set_shader_parameter("block_size", WorldConfig.CUBE_SIZE)
+		block_material.set_shader_parameter("chunk_span", WorldConfig.WIDTH * WorldConfig.CUBE_SIZE)
 	generated_mesh.surface_set_material(0, block_material)
 	self.mesh = generated_mesh
 

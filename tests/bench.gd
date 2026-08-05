@@ -1,7 +1,7 @@
 extends SceneTree
 # Banc d'essai du mesher : godot --headless -s res://tests/bench.gd
 # Mesure séparément la construction des données RLE et le maillage sur une
-# zone de 7x7 chunks, et compte les rectangles produits.
+# zone de 100x100 chunks, et compte les rectangles produits.
 
 func _init() -> void:
 	var template = load("res://Scènes/Cubes/Cubes.tscn").instantiate()
@@ -14,8 +14,8 @@ func _init() -> void:
 	var mesh_us := 0
 	var verts := 0
 	var quads := 0
-	for cx in range(7):
-		for cz in range(7):
+	for cx in range(100):
+		for cz in range(100):
 			var t0 := Time.get_ticks_usec()
 			var data := ChunkData.new()
 			data.build(noise, Vector3i(cx, 0, cz), with_trees)

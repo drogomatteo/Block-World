@@ -9,9 +9,18 @@ extends RefCounted
 #   dessous = col & ~(col décalée vers le haut)
 #   flanc   = col & ~(colonne voisine)
 # Les faces visibles sont ensuite regroupées en plans binaires 2D par
-# (direction, id de bloc, niveau) puis fusionnées en rectangles maximaux par
-# manipulation de bits (trailing zeros / trailing ones). Chaque rectangle
-# n'émet que 4 sommets et 6 indices : le maillage est indexé.
+# (direction, id de bloc, niveau, octet d'AO) puis fusionnées en rectangles
+# maximaux par manipulation de bits (trailing zeros / trailing ones). Chaque
+# rectangle n'émet que 4 sommets et 6 indices : le maillage est indexé.
+#
+# Ambient occlusion par sommet (règle voxel classique, cf. 0fps) : chaque coin
+# de face reçoit un niveau 0-3 d'après les 3 blocs voisins qui le touchent dans
+# le plan devant la face (2 côtés + diagonale ; les 2 côtés pleins -> 3). Les
+# 4 niveaux (2 bits chacun) forment un octet intégré à la clé des plans : la
+# fusion ne réunit que des cellules au même motif d'occlusion, l'AO d'un bord
+# ne s'étale donc jamais sur un grand rectangle. Le facteur de lumière du coin
+# part au GPU dans UV.x (interpolé sur la face) ; le RGB reste l'albédo
+# pré-ombré et l'alpha l'id du bloc.
 
 const FACE_TOP := 0
 const FACE_BOTTOM := 1
@@ -50,11 +59,35 @@ const FACE_CORNERS := {
 const BITS := 63                       # bits utiles par mot de colonne
 const MASK63 := 0x7FFFFFFFFFFFFFFF
 
+# --- Ambient occlusion -------------------------------------------------------
+# Facteur de lumière par niveau d'occlusion (0 = dégagé, 3 = coin enterré).
+const AO_LIGHT := [1.0, 0.75, 0.55, 0.4]
+# Les 8 voisins d'une face dans son plan, indexés par (a, b) où (a, b) sont les
+# 2 axes tangents : 0:(-1,-1) 1:(0,-1) 2:(1,-1) 3:(-1,0) 4:(1,0) 5:(-1,1)
+# 6:(0,1) 7:(1,1). Pour les faces y : a = x, b = z. Pour les faces latérales :
+# a = axe horizontal du plan (z ou x), b = y.
+const AO_RING_DCOL := [-1, 0, 1, -1, 1, -1, 0, 1]
+const AO_RING_DBIT := [-1, -1, -1, 0, 0, 1, 1, 1]
+# Pour chaque direction, les 4 coins de FACE_CORNERS (même ordre) -> indices
+# [côté 1, côté 2, diagonale] dans l'anneau ci-dessus.
+const AO_CORNERS := [
+	[[3, 1, 0], [4, 1, 2], [4, 6, 7], [3, 6, 5]],  # UP
+	[[3, 6, 5], [4, 6, 7], [4, 1, 2], [3, 1, 0]],  # DOWN
+	[[1, 3, 0], [6, 3, 5], [6, 4, 7], [1, 4, 2]],  # LEFT
+	[[1, 4, 2], [6, 4, 7], [6, 3, 5], [1, 3, 0]],  # RIGHT
+	[[3, 1, 0], [4, 1, 2], [4, 6, 7], [3, 6, 5]],  # FORWARD
+	[[3, 6, 5], [4, 6, 7], [4, 1, 2], [3, 1, 0]],  # BACK
+]
+
 var _verts := PackedVector3Array()
 var _norms := PackedVector3Array()
 var _cols := PackedColorArray()
+var _uvs := PackedVector2Array()
 var _idx := PackedInt32Array()
 var _shaded := {}  # couleurs pré-ombrées : _shaded[direction][id de bloc]
+var _ring := [0, 0, 0, 0, 0, 0, 0, 0]  # solidité des 8 voisins (réutilisé)
+var _yoff : Array   # décalage (en mots) des 8 colonnes voisines, faces y
+var _soff : Array   # par direction latérale : décalages des 3 colonnes du plan
 
 static func build(data : ChunkData) -> ArrayMesh:
 	return ChunkMesher.new()._build(data)
@@ -97,6 +130,15 @@ func _build(data : ChunkData) -> ArrayMesh:
 	var cap := nw * BITS
 	var run_data := data.run_data
 	var run_start := data.run_start
+
+	# décalages des colonnes voisines pour l'AO (dépendent de nw)
+	_yoff = [(-D2 - 1) * nw, -nw, (D2 - 1) * nw, -D2 * nw,
+		D2 * nw, (-D2 + 1) * nw, nw, (D2 + 1) * nw]
+	_soff = [null, null,
+		[(-D2 - 1) * nw, -D2 * nw, (-D2 + 1) * nw],  # LEFT    : plan x-1, a = z
+		[(D2 - 1) * nw, D2 * nw, (D2 + 1) * nw],     # RIGHT   : plan x+1, a = z
+		[(-D2 - 1) * nw, -nw, (D2 - 1) * nw],        # FORWARD : plan z-1, a = x
+		[(-D2 + 1) * nw, nw, (D2 + 1) * nw]]         # BACK    : plan z+1, a = x
 
 	# --- 1. masques de solidité par colonne, directement depuis les plages RLE
 	var cols := PackedInt64Array()
@@ -161,18 +203,18 @@ func _build(data : ChunkData) -> ArrayMesh:
 					below |= cols[base + w - 1] >> 62
 				# le bit 0 du mot 0 (y = -1) est la marge, jamais une face du chunk
 				var cut : int = ~1 if w == 0 else ~0
-				_scatter_y(planes[0], c & ~above & cut, w, runs, z, xbit)
-				_scatter_y(planes[1], c & ~below & cut, w, runs, z, xbit)
-				_scatter_side(planes[2], c & ~cols[base_l + w] & cut, w, runs, x, zbit, side_rows)
-				_scatter_side(planes[3], c & ~cols[base_r + w] & cut, w, runs, x, zbit, side_rows)
-				_scatter_side(planes[4], c & ~cols[base_f + w] & cut, w, runs, z, xbit, side_rows)
-				_scatter_side(planes[5], c & ~cols[base_b + w] & cut, w, runs, z, xbit, side_rows)
+				_scatter_y(planes[0], c & ~above & cut, w, runs, z, xbit, true, base, cols, cap)
+				_scatter_y(planes[1], c & ~below & cut, w, runs, z, xbit, false, base, cols, cap)
+				_scatter_side(planes[2], c & ~cols[base_l + w] & cut, w, runs, x, zbit, side_rows, 2, base, cols, cap)
+				_scatter_side(planes[3], c & ~cols[base_r + w] & cut, w, runs, x, zbit, side_rows, 3, base, cols, cap)
+				_scatter_side(planes[4], c & ~cols[base_f + w] & cut, w, runs, z, xbit, side_rows, 4, base, cols, cap)
+				_scatter_side(planes[5], c & ~cols[base_b + w] & cut, w, runs, z, xbit, side_rows, 5, base, cols, cap)
 
 	# --- 3. greedy meshing binaire de chaque plan, émission des rectangles
 	for d in range(6):
 		var dict : Dictionary = planes[d]
 		for key in dict:
-			_greedy_plane(d, key >> 2, key & 3, dict[key])
+			_greedy_plane(d, key >> 10, (key >> 2) & 0xFF, key & 3, dict[key])
 
 	if _verts.is_empty():
 		return null
@@ -182,6 +224,7 @@ func _build(data : ChunkData) -> ArrayMesh:
 	arrays[Mesh.ARRAY_VERTEX] = _verts
 	arrays[Mesh.ARRAY_NORMAL] = _norms
 	arrays[Mesh.ARRAY_COLOR] = _cols
+	arrays[Mesh.ARRAY_TEX_UV] = _uvs  # UV.x = facteur de lumière AO du coin
 	arrays[Mesh.ARRAY_INDEX] = _idx
 
 	# vertex packing natif : positions 16 bits normalisées sur l'AABB, normales
@@ -196,12 +239,27 @@ static func _range_mask(lo : int, hi : int) -> int:
 	var mhi : int = MASK63 if hi == BITS else (1 << hi) - 1
 	return mhi & ~((1 << lo) - 1)
 
-# Faces UP / DOWN : un plan par y, rangée = z, bit = x.
-func _scatter_y(dict : Dictionary, m : int, w : int, runs : Array, z : int, xbit : int) -> void:
+# Faces UP / DOWN : un plan par y, rangée = z, bit = x. Les 8 voisins d'AO
+# sont tous au même niveau (le plan à y ± 1) : un seul mot/décalage pour les 8.
+@warning_ignore("integer_division")
+func _scatter_y(dict : Dictionary, m : int, w : int, runs : Array, z : int, xbit : int,
+		up : bool, base : int, cols : PackedInt64Array, cap : int) -> void:
 	while m != 0:
 		var bit := w * BITS + _tz(m)
 		m &= m - 1
-		var key := ((bit - 1) << 2) | _id_at(runs, bit)
+		var ao := 0
+		var t := bit + 1 if up else bit - 1
+		if t < cap:
+			var wt := t / BITS
+			var lot := t - wt * BITS
+			var any := 0
+			for i in range(8):
+				var s : int = (cols[base + _yoff[i] + wt] >> lot) & 1
+				_ring[i] = s
+				any |= s
+			if any != 0:  # anneau vide (terrain plat) = cas majoritaire
+				ao = _ao_byte(0 if up else 1)
+		var key := ((bit - 1) << 10) | (ao << 2) | _id_at(runs, bit)
 		var rows = dict.get(key)
 		if rows == null:
 			rows = []
@@ -211,11 +269,23 @@ func _scatter_y(dict : Dictionary, m : int, w : int, runs : Array, z : int, xbit
 		rows[z] |= xbit
 
 # Faces latérales : un plan par niveau (x ou z), rangée = y, bit = z ou x.
-func _scatter_side(dict : Dictionary, m : int, w : int, runs : Array, level : int, bitmask : int, nrows : int) -> void:
+# Les voisins d'AO vivent dans les 3 colonnes du plan devant la face, aux
+# bits y-1 / y / y+1.
+@warning_ignore("integer_division")
+func _scatter_side(dict : Dictionary, m : int, w : int, runs : Array, level : int,
+		bitmask : int, nrows : int, d : int, base : int, cols : PackedInt64Array, cap : int) -> void:
+	var coff : Array = _soff[d]
 	while m != 0:
 		var bit := w * BITS + _tz(m)
 		m &= m - 1
-		var key := (level << 2) | _id_at(runs, bit)
+		for i in range(8):
+			var t : int = bit + AO_RING_DBIT[i]
+			if t >= cap:
+				_ring[i] = 0
+			else:
+				var wt := t / BITS
+				_ring[i] = (cols[base + coff[AO_RING_DCOL[i] + 1] + wt] >> (t - wt * BITS)) & 1
+		var key := (level << 10) | (_ao_byte(d) << 2) | _id_at(runs, bit)
 		var rows = dict.get(key)
 		if rows == null:
 			rows = []
@@ -224,10 +294,24 @@ func _scatter_side(dict : Dictionary, m : int, w : int, runs : Array, level : in
 			dict[key] = rows
 		rows[bit - 1] |= bitmask
 
+# Assemble l'octet d'AO (4 coins x 2 bits, ordre de FACE_CORNERS) depuis la
+# solidité des 8 voisins dans _ring. Règle : les 2 côtés pleins -> niveau 3
+# (la diagonale est cachée de toute façon), sinon somme des 3 voisins.
+func _ao_byte(d : int) -> int:
+	var tbl : Array = AO_CORNERS[d]
+	var ao := 0
+	for k in range(4):
+		var e : Array = tbl[k]
+		var s1 : int = _ring[e[0]]
+		var s2 : int = _ring[e[1]]
+		var lvl : int = 3 if (s1 == 1 and s2 == 1) else s1 + s2 + _ring[e[2]]
+		ao |= lvl << (k << 1)
+	return ao
+
 # Fusionne un plan binaire en rectangles maximaux : expansion en hauteur le
 # long des bits (trailing ones), puis en largeur sur les rangées suivantes
 # tant qu'elles contiennent le même motif (dont les bits sont alors éteints).
-func _greedy_plane(d : int, level : int, id : int, rows : Array) -> void:
+func _greedy_plane(d : int, level : int, ao : int, id : int, rows : Array) -> void:
 	var n := rows.size()
 	for r in range(n):
 		var y := 0
@@ -245,12 +329,12 @@ func _greedy_plane(d : int, level : int, id : int, rows : Array) -> void:
 					break
 				rows[r + w] &= clear
 				w += 1
-			_emit_quad(d, level, id, y, r, h, w)
+			_emit_quad(d, level, ao, id, y, r, h, w)
 			y += h
 
 # Émet le rectangle couvrant les bits [b0, b0+h) des rangées [r0, r0+w) du
 # plan `level` de la direction d : 4 sommets + 6 indices.
-func _emit_quad(d : int, level : int, id : int, b0 : int, r0 : int, h : int, w : int) -> void:
+func _emit_quad(d : int, level : int, ao : int, id : int, b0 : int, r0 : int, h : int, w : int) -> void:
 	var fp := level + 0.5 if (d == 0 or d == 3 or d == 5) else level - 0.5
 	var bmin := b0 - 0.5
 	var bmax := b0 + h - 0.5
@@ -280,12 +364,32 @@ func _emit_quad(d : int, level : int, id : int, b0 : int, r0 : int, h : int, w :
 			(pmin.z if corner.z < 0 else pmax.z) * s))
 		_norms.push_back(dir)
 		_cols.push_back(color)
-	_idx.push_back(vbase)
-	_idx.push_back(vbase + 1)
-	_idx.push_back(vbase + 2)
-	_idx.push_back(vbase)
-	_idx.push_back(vbase + 2)
-	_idx.push_back(vbase + 3)
+	var a0 := ao & 3
+	var a1 := (ao >> 2) & 3
+	var a2 := (ao >> 4) & 3
+	var a3 := (ao >> 6) & 3
+	_uvs.push_back(Vector2(AO_LIGHT[a0], 0.0))
+	_uvs.push_back(Vector2(AO_LIGHT[a1], 0.0))
+	_uvs.push_back(Vector2(AO_LIGHT[a2], 0.0))
+	_uvs.push_back(Vector2(AO_LIGHT[a3], 0.0))
+	# Anisotropie : l'interpolation se fait par triangle — couper le quad par
+	# la diagonale reliant les coins les plus occlus, sinon le dégradé d'AO
+	# dessine des artefacts en croix selon l'orientation. L'ordre de l'anneau
+	# est préservé : le winding reste horaire.
+	if a0 + a2 > a1 + a3:
+		_idx.push_back(vbase + 1)
+		_idx.push_back(vbase + 2)
+		_idx.push_back(vbase + 3)
+		_idx.push_back(vbase + 1)
+		_idx.push_back(vbase + 3)
+		_idx.push_back(vbase)
+	else:
+		_idx.push_back(vbase)
+		_idx.push_back(vbase + 1)
+		_idx.push_back(vbase + 2)
+		_idx.push_back(vbase)
+		_idx.push_back(vbase + 2)
+		_idx.push_back(vbase + 3)
 
 # Id du bloc au bit donné d'après les plages solides de la colonne.
 static func _id_at(runs : Array, bit : int) -> int:

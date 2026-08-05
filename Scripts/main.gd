@@ -2,18 +2,30 @@ extends Node3D
 
 const CHUNCK_SCENE = preload("res://Scènes/Cubes/Cubes.tscn")
 
-# Streaming : les chunks dans un carré de view_radius autour de la caméra
-# sont générés (les plus proches d'abord), ceux qui en sortent sont libérés.
+# Streaming : les chunks dans un disque de view_radius autour de la caméra
+# sont générés (les plus proches d'abord), ceux qui en sortent sont libérés —
+# zone circulaire, comme le brouillard de distance qui la borde.
 # La génération (données RLE + maillage) tourne dans un thread de travail ;
 # le thread principal ne fait qu'instancier les nœuds des maillages prêts,
 # donc les fps ne dépendent plus du coût de génération.
 @export var view_radius : int = 15
 @export var chunks_per_frame : int = 4  # maximum de chunks instanciés par frame
 
+# Brouillard dynamique : opaque juste avant le chunk MANQUANT le plus proche
+# de la caméra (pas au rayon visé) — il colle à la frontière de génération au
+# chargement ou en vol rapide, puis s'ouvre quand elle s'éloigne.
+@export var fog_expand_speed : float = 96.0     # m/s à l'ouverture
+@export var fog_contract_speed : float = 600.0  # m/s à la fermeture
+
 @onready var camera : Camera3D = $Camera3D
 
 var chunks : Dictionary = {}          # Vector2i(cx, cz) -> Chunk
 var last_center := Vector2i(1 << 30, 0)
+
+var _env : Environment
+var _chunks_dirty := true   # l'ensemble des chunks a changé -> recalculer la frontière
+var _frontier := 0.0        # distance (en chunks) du chunk manquant le plus proche
+var _scan_offsets : Array = []  # offsets du disque de rayon view_radius+1, proches d'abord
 
 # Communication avec le thread de génération
 var _thread : Thread
@@ -27,6 +39,22 @@ var _with_trees : bool = true
 
 func _ready() -> void:
 	RenderingServer.set_debug_generate_wireframes(true)
+	# Départ brouillard fermé : rien n'est encore généré, le monde s'ouvrira
+	# au rythme de la génération (voir _update_fog).
+	_env = $WorldEnvironment.environment
+	_env.fog_depth_end = Chunk.width * Chunk.cube_size * 0.5
+	_env.fog_depth_begin = _env.fog_depth_end * 0.5
+	# Offsets du disque de streaming triés par distance : sert d'ordre de
+	# génération (proche d'abord) et de parcours pour trouver la frontière.
+	# Rayon +1 : l'anneau jamais chargé fait butée naturelle du balayage.
+	var outer := (view_radius + 1) * (view_radius + 1)
+	for dx in range(-view_radius - 1, view_radius + 2):
+		for dz in range(-view_radius - 1, view_radius + 2):
+			var o := Vector2i(dx, dz)
+			if o.length_squared() <= outer:
+				_scan_offsets.append(o)
+	_scan_offsets.sort_custom(func(a, b):
+		return a.length_squared() < b.length_squared())
 	# le bruit et les réglages de génération sont portés par la scène de chunk
 	var template = CHUNCK_SCENE.instantiate()
 	_noise = template.noise
@@ -42,7 +70,7 @@ func _exit_tree() -> void:
 	_sem.post()
 	_thread.wait_to_finish()
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	var center := Vector2i(
 		floori(camera.position.x / (Chunk.width * Chunk.cube_size)),
 		floori(camera.position.z / (Chunk.depth * Chunk.cube_size))
@@ -51,27 +79,31 @@ func _process(_delta: float) -> void:
 		last_center = center
 		recenter(center)
 	_collect_results()
+	_update_fog(delta)
 
 # Marge de 1 chunk avant déchargement pour ne pas alterner charge / décharge
 # quand la caméra oscille autour d'une frontière de chunk.
 func recenter(center : Vector2i) -> void:
+	_chunks_dirty = true
+	var keep := (view_radius + 1) * (view_radius + 1)
 	for pos in chunks.keys():
-		var d : Vector2i = (pos - center).abs()
-		if maxi(d.x, d.y) > view_radius + 1:
+		if (pos - center).length_squared() > keep:
 			chunks[pos].queue_free()
 			chunks.erase(pos)
 
+	# _scan_offsets est déjà trié proche d'abord ; on ne génère que le disque
+	# de view_radius (l'anneau au-delà n'est gardé que par l'hystérésis).
 	var wanted : Array = []
-	for dx in range(-view_radius, view_radius + 1):
-		for dz in range(-view_radius, view_radius + 1):
-			var pos := center + Vector2i(dx, dz)
-			if not chunks.has(pos):
-				wanted.append(pos)
-	wanted.sort_custom(func(a, b):
-		return (a - center).length_squared() < (b - center).length_squared())
+	var inner := view_radius * view_radius
+	for o in _scan_offsets:
+		if o.length_squared() > inner:
+			break
+		var pos : Vector2i = center + o
+		if not chunks.has(pos):
+			wanted.append(pos)
 
 	# remplace la file du thread : l'ordre redevient « proche d'abord » et les
-	# positions sorties du carré ne seront jamais générées
+	# positions sorties du disque ne seront jamais générées
 	_mutex.lock()
 	_work = wanted
 	_mutex.unlock()
@@ -87,17 +119,43 @@ func _collect_results() -> void:
 		results.append(_done.pop_front())
 	_mutex.unlock()
 
+	var keep := (view_radius + 1) * (view_radius + 1)
 	for r in results:
 		var pos : Vector2i = r[0]
-		var d : Vector2i = (pos - last_center).abs()
-		if chunks.has(pos) or maxi(d.x, d.y) > view_radius + 1:
-			continue  # doublon, ou sorti du carré pendant la génération
+		if chunks.has(pos) or (pos - last_center).length_squared() > keep:
+			continue  # doublon, ou sorti du disque pendant la génération
 		var chunk = CHUNCK_SCENE.instantiate()
 		chunk.chunk_position = Vector3i(pos.x, 0, pos.y)
 		chunk.position = Vector3(pos.x * Chunk.width, 0, pos.y * Chunk.depth) * Chunk.cube_size
 		add_child(chunk)
 		chunk.apply_generated(r[1], r[2])
 		chunks[pos] = chunk
+		_chunks_dirty = true
+
+# Vise la frontière moins une marge de 1,5 chunk (caméra excentrée dans son
+# chunk + coin le plus proche du chunk manquant), et s'y rend à vitesse
+# bornée : fermeture rapide (cacher la frontière qui se rapproche), ouverture
+# douce (pas d'à-coup quand un trou se comble).
+func _update_fog(delta: float) -> void:
+	if _chunks_dirty:
+		_chunks_dirty = false
+		_frontier = _nearest_missing()
+	var span := Chunk.width * Chunk.cube_size
+	var target : float = maxf((_frontier - 1.5) * span, span * 0.25)
+	var end : float = _env.fog_depth_end
+	var speed := fog_expand_speed if target > end else fog_contract_speed
+	end = move_toward(end, target, speed * delta)
+	_env.fog_depth_end = end
+	_env.fog_depth_begin = end * 0.5
+
+# Distance (en chunks) entre le centre et le chunk absent le plus proche.
+# Le balayage suit _scan_offsets (proches d'abord) ; l'anneau au-delà de
+# view_radius n'étant jamais généré, il borne toujours le résultat.
+func _nearest_missing() -> float:
+	for o in _scan_offsets:
+		if not chunks.has(last_center + o):
+			return Vector2(o).length()
+	return float(view_radius) + 1.0
 
 # Boucle du thread de génération : ne touche jamais l'arbre de scène. Le
 # cache statique de TerrainHeight n'est utilisé que par ce thread.
@@ -122,9 +180,17 @@ func _worker_loop() -> void:
 		_mutex.unlock()
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F1:
-		var vp := get_viewport()
-		if vp.debug_draw == Viewport.DEBUG_DRAW_WIREFRAME:
-			vp.debug_draw = Viewport.DEBUG_DRAW_DISABLED
-		else:
-			vp.debug_draw = Viewport.DEBUG_DRAW_WIREFRAME
+	if event is InputEventKey and event.pressed and not event.echo:
+		match event.keycode:
+			KEY_F1:
+				var vp := get_viewport()
+				if vp.debug_draw == Viewport.DEBUG_DRAW_WIREFRAME:
+					vp.debug_draw = Viewport.DEBUG_DRAW_DISABLED
+				else:
+					vp.debug_draw = Viewport.DEBUG_DRAW_WIREFRAME
+			KEY_F2:
+				_env.fog_enabled = not _env.fog_enabled
+			KEY_F3:
+				if Chunk.block_material != null:
+					Chunk.block_material.set_shader_parameter("show_chunk_borders",
+						not Chunk.block_material.get_shader_parameter("show_chunk_borders"))
