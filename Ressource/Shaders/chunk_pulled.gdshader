@@ -22,10 +22,15 @@ const vec3 DIRS[6] = vec3[](
 const float FACE_SHADE[6] = float[](1.0, 0.5, 0.6, 0.6, 0.8, 0.8);
 const float AO_LIGHT[4] = float[](1.0, 0.75, 0.55, 0.4);
 // Couleurs de BLOCKS par id (0 inutilisé) : dessus/dessous puis flancs.
-const vec3 COLOR_TOP[4] = vec3[](
-	vec3(0.0), vec3(0.137, 0.902, 0.137), vec3(0.42, 0.27, 0.11), vec3(0.10, 0.55, 0.12));
-const vec3 COLOR_SIDE[4] = vec3[](
-	vec3(0.0), vec3(0.137, 0.902, 0.137), vec3(0.48, 0.31, 0.14), vec3(0.10, 0.55, 0.12));
+// Copie conforme de ChunkMesher.BLOCKS — tenir les deux synchronisées.
+const vec3 COLOR_TOP[9] = vec3[](
+	vec3(0.0), vec3(0.137, 0.902, 0.137), vec3(0.42, 0.27, 0.11), vec3(0.10, 0.55, 0.12),
+	vec3(0.76, 0.60, 0.30), vec3(0.32, 0.20, 0.10), vec3(0.42, 0.42, 0.45),
+	vec3(0.92, 0.94, 0.97), vec3(0.60, 0.80, 0.97));
+const vec3 COLOR_SIDE[9] = vec3[](
+	vec3(0.0), vec3(0.137, 0.902, 0.137), vec3(0.48, 0.31, 0.14), vec3(0.10, 0.55, 0.12),
+	vec3(0.70, 0.54, 0.26), vec3(0.30, 0.18, 0.09), vec3(0.38, 0.38, 0.41),
+	vec3(0.86, 0.88, 0.92), vec3(0.52, 0.72, 0.92));
 // FACE_CORNERS : signes des 4 coins de chaque direction (-1 = bord min du
 // rectangle sur l'axe, +1 = bord max), même winding horaire que le mesher.
 const vec3 CORNERS[24] = vec3[](
@@ -55,10 +60,10 @@ void vertex() {
 		uint w1 = b1v.r | (b1v.g << 8u) | (b1v.b << 16u) | (b1v.a << 24u);
 		uint d = w0 & 7u;
 		uint flip = (w0 >> 3u) & 1u;
-		uint id = (w0 >> 4u) & 3u;
-		uint ao = (w0 >> 6u) & 255u;
-		float level = float((w0 >> 14u) & 255u);
-		float b0 = float((w0 >> 22u) & 31u);
+		uint id = (w0 >> 4u) & 15u;
+		uint ao = (w0 >> 8u) & 255u;
+		float level = float((w0 >> 16u) & 255u);
+		float b0 = float((w0 >> 24u) & 31u);
 		float r0 = float(w1 & 255u);
 		float h = float(((w1 >> 8u) & 31u) + 1u);
 		float w = float(((w1 >> 13u) & 255u) + 1u);

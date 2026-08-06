@@ -2,50 +2,57 @@ extends Node3D
 
 const CHUNCK_SCENE = preload("res://Scènes/Cubes/Cubes.tscn")
 
-# Streaming : les chunks dans un disque de view_radius autour de la caméra
-# sont générés (les plus proches d'abord), ceux qui en sortent sont libérés —
-# zone circulaire, comme le brouillard de distance qui la borde.
-# La génération (données RLE + maillage) tourne dans un thread de travail ;
-# le thread principal ne fait qu'instancier les nœuds des maillages prêts,
-# donc les fps ne dépendent plus du coût de génération.
-@export var view_radius : int = 15
-@export var chunks_per_frame : int = 4  # maximum de chunks instanciés par frame
+# Streaming par QUADTREE de terrain (l'« octree » d'un monde en colonnes :
+# le découpage est en x/z, l'axe y vit dans les cellules verticales des
+# nœuds). Le disque de view_radius chunks autour de la caméra est pavé de
+# nœuds de niveau 0..MAX_LEVEL : un nœud de niveau k couvre 2^k × 2^k chunks
+# avec une grille FIXE de 32×32 cellules de 2^k blocs — chaque nœud coûte à
+# peu près le même maillage, qu'il fasse 32 ou 512 blocs de large. Près de
+# la caméra les nœuds sont fins (arbres, blocs unité), au loin ils sont
+# énormes : ~1000 nœuds couvrent un rayon de 100 chunks (3 200 blocs).
+#
+# Remplacement sans trou : quand une zone change de niveau, l'ancien nœud
+# n'est libéré que lorsque TOUTE sa surface est couverte par les nœuds
+# désirés arrivés (_prune/_covered) — l'ancien maillage reste affiché entre
+# temps. La génération (RLE + maillage) tourne dans un thread de travail.
+@export var view_radius : int = 100
+@export var chunks_per_frame : int = 4  # maximum de nœuds instanciés par frame
+# lod_rings[k-1] : en deçà de cette distance (en chunks), un nœud de
+# niveau k est trop grossier et se subdivise en 4.
+@export var lod_rings : PackedInt32Array = [10, 20, 40, 80]
+const MAX_LEVEL := 4
 
-# LOD : pas du voxel selon la distance (en chunks) — cellules de 1 bloc
-# jusqu'à lod1_radius, de 2 jusqu'à lod2_radius, de 4 au-delà (la transition
-# 2 -> 4 se fait dans le brouillard). Un chunk qui change d'anneau est
-# régénéré par le thread puis REMPLACÉ à l'arrivée du résultat : l'ancien
-# maillage reste affiché entre-temps, jamais de trou.
-@export var lod1_radius : int = 8
-@export var lod2_radius : int = 12
-
-# Brouillard dynamique : opaque juste avant le chunk MANQUANT le plus proche
-# de la caméra (pas au rayon visé) — il colle à la frontière de génération au
-# chargement ou en vol rapide, puis s'ouvre quand elle s'éloigne.
+# Brouillard dynamique : opaque juste avant le nœud MANQUANT le plus proche
+# de la caméra — il colle à la frontière de génération au chargement ou en
+# vol rapide, puis s'ouvre quand elle s'éloigne.
 @export var fog_expand_speed : float = 96.0     # m/s à l'ouverture
 @export var fog_contract_speed : float = 600.0  # m/s à la fermeture
 
 @onready var camera : Camera3D = $Camera3D
+@onready var water : MeshInstance3D = $Water
+@onready var terminal = $Terminal
+@onready var sky = $SkyCycle
 
-var chunks : Dictionary = {}          # Vector2i(cx, cz) -> Chunk
+var nodes : Dictionary = {}     # Vector3i(niveau, tx, tz) -> Chunk
+var _desired : Dictionary = {}  # Vector3i -> distance à la caméra (chunks)
 var last_center := Vector2i(1 << 30, 0)
-var _steps : Dictionary = {}          # Vector2i -> pas de LOD du chunk instancié
 
 var _env : Environment
-var _chunks_dirty := true   # l'ensemble des chunks a changé -> recalculer la frontière
-var _frontier := 0.0        # distance (en chunks) du chunk manquant le plus proche
-var _scan_offsets : Array = []  # offsets du disque de rayon view_radius+1, proches d'abord
+var _chunks_dirty := true   # l'ensemble des nœuds a changé -> recalculer la frontière
+var _frontier := 0.0        # distance (en chunks) du vide non généré le plus proche
+var _frontier_wait := 0.0   # recalcul au plus toutes les 0,2 s (tri des manquants)
 
 # Communication avec le thread de génération
 var _thread : Thread
 var _mutex := Mutex.new()
 var _sem := Semaphore.new()
-var _work : Array = []      # positions à générer, les plus proches d'abord
-var _done : Array = []      # résultats prêts : [position, ChunkData, ArrayMesh]
+var _work : Array = []      # [clé, gen_id] à générer, les plus proches d'abord
+var _done : Array = []      # résultats prêts : [gen_id, clé, ChunkData, maillage]
 var _quit := false
 var _noise : FastNoiseLite
 var _with_trees : bool = true
 var _pulling : bool = true  # vertex pulling (cf. Chunk.vertex_pulling)
+var _gen_id := 1            # incrémenté par « regenerate » : invalide les résultats en vol
 
 func _ready() -> void:
 	RenderingServer.set_debug_generate_wireframes(true)
@@ -54,17 +61,10 @@ func _ready() -> void:
 	_env = $WorldEnvironment.environment
 	_env.fog_depth_end = Chunk.width * Chunk.cube_size * 0.5
 	_env.fog_depth_begin = _env.fog_depth_end * 0.5
-	# Offsets du disque de streaming triés par distance : sert d'ordre de
-	# génération (proche d'abord) et de parcours pour trouver la frontière.
-	# Rayon +1 : l'anneau jamais chargé fait butée naturelle du balayage.
-	var outer := (view_radius + 1) * (view_radius + 1)
-	for dx in range(-view_radius - 1, view_radius + 2):
-		for dz in range(-view_radius - 1, view_radius + 2):
-			var o := Vector2i(dx, dz)
-			if o.length_squared() <= outer:
-				_scan_offsets.append(o)
-	_scan_offsets.sort_custom(func(a, b):
-		return a.length_squared() < b.length_squared())
+	# Surface de l'océan : juste sous la face supérieure (SEA_LEVEL + 0.5)
+	# des colonnes qui affleurent — une colonne de hauteur SEA_LEVEL émerge.
+	water.position.y = (WorldConfig.SEA_LEVEL + 0.35) * Chunk.cube_size
+	terminal.command.connect(_run_command)
 	# le bruit et les réglages de génération sont portés par la scène de chunk
 	var template = CHUNCK_SCENE.instantiate()
 	_noise = template.noise
@@ -91,40 +91,70 @@ func _process(delta: float) -> void:
 		recenter(center)
 	_collect_results()
 	_update_fog(delta)
+	# le plan d'eau suit la caméra (motif en coordonnées monde dans le shader :
+	# le glissement est invisible)
+	water.position.x = camera.position.x
+	water.position.z = camera.position.z
 
-# Marge de 1 chunk avant déchargement pour ne pas alterner charge / décharge
-# quand la caméra oscille autour d'une frontière de chunk.
+# Recalcule le pavage désiré (descente de quadtree) et remet la file du
+# thread : l'ordre redevient « proche d'abord » et les nœuds sortis du
+# disque ne seront jamais générés.
 func recenter(center : Vector2i) -> void:
 	_chunks_dirty = true
-	var keep := (view_radius + 1) * (view_radius + 1)
-	for pos in chunks.keys():
-		if (pos - center).length_squared() > keep:
-			chunks[pos].queue_free()
-			chunks.erase(pos)
-			_steps.erase(pos)
+	_desired.clear()
+	var c := Vector2(center) + Vector2(0.5, 0.5)
+	var S := 1 << MAX_LEVEL
+	for tx in range(floori(float(center.x - view_radius) / S), floori(float(center.x + view_radius) / S) + 1):
+		for tz in range(floori(float(center.y - view_radius) / S), floori(float(center.y + view_radius) / S) + 1):
+			_select(MAX_LEVEL, Vector2i(tx, tz), c)
 
-	# _scan_offsets est déjà trié proche d'abord ; on ne génère que le disque
-	# de view_radius (l'anneau au-delà n'est gardé que par l'hystérésis).
-	# Un chunk présent au mauvais pas de LOD est re-demandé, pas déchargé.
-	var wanted : Array = []
-	var inner := view_radius * view_radius
-	for o in _scan_offsets:
-		if o.length_squared() > inner:
-			break
-		var pos : Vector2i = center + o
-		var want := _desired_step(o)
-		if not chunks.has(pos) or _steps.get(pos, 0) != want:
-			wanted.append([pos, want])
-
-	# remplace la file du thread : l'ordre redevient « proche d'abord » et les
-	# positions sorties du disque ne seront jamais générées
+	# Priorité aux TROUS (zones qu'aucun nœud n'affiche : nouveau terrain au
+	# front du déplacement) sur les mises à niveau de LOD (l'ancien nœud reste
+	# affiché en attendant) : en vol soutenu, tout le débit du worker part
+	# dans le front — le brouillard reste ouvert, le raffinement des anneaux
+	# rattrape quand on ralentit.
+	var holes : Array = []
+	var upgrades : Array = []
+	for key in _desired:
+		if nodes.has(key):
+			continue
+		if _rendered(key.x, Vector2i(key.y, key.z)):
+			upgrades.append(key)
+		else:
+			holes.append(key)
+	var by_dist := func(a, b): return _desired[a] < _desired[b]
+	holes.sort_custom(by_dist)
+	upgrades.sort_custom(by_dist)
+	var items : Array = []
+	for key in holes:
+		items.append([key, _gen_id])
+	for key in upgrades:
+		items.append([key, _gen_id])
 	_mutex.lock()
-	_work = wanted
+	_work = items
 	_mutex.unlock()
-	for i in wanted.size():
+	for i in items.size():
 		_sem.post()
+	_prune()
 
-# Récupère les chunks générés par le thread et les instancie (borné par
+# Descente du quadtree : garde le nœud tel quel s'il est assez loin pour son
+# niveau, sinon le subdivise en 4 ; hors du rayon, rien.
+func _select(level : int, t : Vector2i, c : Vector2) -> void:
+	var S := 1 << level
+	var mn := Vector2(t * S)
+	var d := c.distance_to(c.clamp(mn, mn + Vector2(S, S)))
+	if d > float(view_radius):
+		return
+	if level > 0 and d < float(lod_rings[level - 1]):
+		var t2 := t * 2
+		_select(level - 1, t2, c)
+		_select(level - 1, t2 + Vector2i(1, 0), c)
+		_select(level - 1, t2 + Vector2i(0, 1), c)
+		_select(level - 1, t2 + Vector2i(1, 1), c)
+	else:
+		_desired[Vector3i(level, t.x, t.y)] = d
+
+# Récupère les nœuds générés par le thread et les instancie (borné par
 # chunks_per_frame pour lisser les frames, le reste attend la suivante).
 func _collect_results() -> void:
 	var results : Array = []
@@ -133,43 +163,67 @@ func _collect_results() -> void:
 		results.append(_done.pop_front())
 	_mutex.unlock()
 
-	var keep := (view_radius + 1) * (view_radius + 1)
 	for r in results:
-		var pos : Vector2i = r[0]
-		var r_step : int = r[1]
-		if (pos - last_center).length_squared() > keep:
-			continue  # sorti du disque pendant la génération
-		var want := _desired_step(pos - last_center)
-		if chunks.has(pos):
-			if _steps.get(pos, 0) == r_step or r_step != want:
-				continue  # doublon, ou changement de LOD devenu périmé
-			chunks[pos].queue_free()  # remplacement de LOD : l'ancien couvrait jusqu'ici
-		elif r_step != want:
-			# résultat d'un LOD périmé mais mieux qu'un trou : on l'affiche et
-			# on redemande tout de suite le bon pas
-			_mutex.lock()
-			_work.push_front([pos, want])
-			_mutex.unlock()
-			_sem.post()
+		if r[0] != _gen_id:
+			continue  # résultat d'un monde régénéré depuis
+		var key : Vector3i = r[1]
+		if not _desired.has(key) or nodes.has(key):
+			continue  # sorti du pavage désiré pendant la génération, ou doublon
+		var S := 1 << key.x
+		var cpos := Vector2i(key.y, key.z) * S
 		var chunk = CHUNCK_SCENE.instantiate()
-		chunk.chunk_position = Vector3i(pos.x, 0, pos.y)
-		chunk.position = Vector3(pos.x * Chunk.width, 0, pos.y * Chunk.depth) * Chunk.cube_size
+		chunk.chunk_position = Vector3i(cpos.x, 0, cpos.y)
+		chunk.position = Vector3(cpos.x * Chunk.width, 0, cpos.y * Chunk.depth) * Chunk.cube_size
 		add_child(chunk)
 		if r[3] is Dictionary:
 			chunk.apply_generated_packed(r[2], r[3])
 		else:
 			chunk.apply_generated(r[2], r[3])
-		chunks[pos] = chunk
-		_steps[pos] = r_step
+		nodes[key] = chunk
 		_chunks_dirty = true
+	if not results.is_empty():
+		_prune()
 
-# Vise la frontière moins une marge de 1,5 chunk (caméra excentrée dans son
-# chunk + coin le plus proche du chunk manquant), et s'y rend à vitesse
+# Libère les nœuds qui ne sont plus désirés dès que toute leur surface est
+# couverte par les nœuds désirés présents — jamais de trou pendant les
+# changements de niveau.
+func _prune() -> void:
+	for key in nodes.keys():
+		if _desired.has(key):
+			continue
+		if _covered(key.x, Vector2i(key.y, key.z)):
+			nodes[key].queue_free()
+			nodes.erase(key)
+
+# La zone (niveau, tuile) est-elle rendue ? Oui si le nœud désiré qui la
+# contient (elle-même ou un ancêtre) est instancié, ou si ses 4 quarts le
+# sont récursivement ; une zone hors pavage désiré (hors rayon) est libre.
+func _covered(level : int, t : Vector2i) -> bool:
+	var key := Vector3i(level, t.x, t.y)
+	if _desired.has(key):
+		return nodes.has(key)
+	var l := level
+	var tt := t
+	while l < MAX_LEVEL:
+		l += 1
+		tt = Vector2i(tt.x >> 1, tt.y >> 1)
+		var k := Vector3i(l, tt.x, tt.y)
+		if _desired.has(k):
+			return nodes.has(k)
+	if level == 0:
+		return true
+	var t2 := t * 2
+	return _covered(level - 1, t2) and _covered(level - 1, t2 + Vector2i(1, 0)) \
+		and _covered(level - 1, t2 + Vector2i(0, 1)) and _covered(level - 1, t2 + Vector2i(1, 1))
+
+# Vise la frontière moins une marge de 1,5 chunk, et s'y rend à vitesse
 # bornée : fermeture rapide (cacher la frontière qui se rapproche), ouverture
 # douce (pas d'à-coup quand un trou se comble).
 func _update_fog(delta: float) -> void:
-	if _chunks_dirty:
+	_frontier_wait -= delta
+	if _chunks_dirty and _frontier_wait <= 0.0:
 		_chunks_dirty = false
+		_frontier_wait = 0.2
 		_frontier = _nearest_missing()
 	var span := Chunk.width * Chunk.cube_size
 	var target : float = maxf((_frontier - 1.5) * span, span * 0.25)
@@ -179,23 +233,38 @@ func _update_fog(delta: float) -> void:
 	_env.fog_depth_end = end
 	_env.fog_depth_begin = end * 0.5
 
-# Pas de LOD voulu pour un chunk à l'offset o du centre.
-func _desired_step(o : Vector2i) -> int:
-	var d2 := o.length_squared()
-	if d2 <= lod1_radius * lod1_radius:
-		return 1
-	if d2 <= lod2_radius * lod2_radius:
-		return 2
-	return 4
-
-# Distance (en chunks) entre le centre et le chunk absent le plus proche.
-# Le balayage suit _scan_offsets (proches d'abord) ; l'anneau au-delà de
-# view_radius n'étant jamais généré, il borne toujours le résultat.
+# Distance (en chunks) du VIDE le plus proche : le nœud désiré manquant le
+# plus près dont la zone n'est affichée par AUCUN nœud instancié — un nœud
+# en attente de re-génération (changement de niveau en se déplaçant) dont
+# l'ancien nœud couvre encore la zone ne referme PAS le brouillard.
 func _nearest_missing() -> float:
-	for o in _scan_offsets:
-		if not chunks.has(last_center + o):
-			return Vector2(o).length()
+	var missing : Array = []
+	for key in _desired:
+		if not nodes.has(key):
+			missing.append(key)
+	missing.sort_custom(func(a, b):
+		return _desired[a] < _desired[b])
+	for key in missing:
+		if not _rendered(key.x, Vector2i(key.y, key.z)):
+			return _desired[key]
 	return float(view_radius) + 1.0
+
+# La zone (niveau, tuile) est-elle affichée par un nœud instancié, désiré ou
+# non ? (contrairement à _covered, les nœuds périmés comptent : ils restent
+# affichés jusqu'à leur remplacement)
+func _rendered(level : int, t : Vector2i) -> bool:
+	var l := level
+	var tt := t
+	while l <= MAX_LEVEL:
+		if nodes.has(Vector3i(l, tt.x, tt.y)):
+			return true
+		l += 1
+		tt = Vector2i(tt.x >> 1, tt.y >> 1)
+	if level == 0:
+		return false
+	var t2 := t * 2
+	return _rendered(level - 1, t2) and _rendered(level - 1, t2 + Vector2i(1, 0)) \
+		and _rendered(level - 1, t2 + Vector2i(0, 1)) and _rendered(level - 1, t2 + Vector2i(1, 1))
 
 # Boucle du thread de génération : ne touche jamais l'arbre de scène. Le
 # cache statique de TerrainHeight n'est utilisé que par ce thread.
@@ -211,15 +280,71 @@ func _worker_loop() -> void:
 		if item == null:
 			continue
 
-		var pos : Vector2i = item[0]
-		var lod : int = item[1]
+		var key : Vector3i = item[0]
+		var step := 1 << key.x
+		var cpos := Vector2i(key.y, key.z) * step
 		var data := ChunkData.new()
-		data.build(_noise, Vector3i(pos.x, 0, pos.y), _with_trees, lod)
+		data.build(_noise, Vector3i(cpos.x, 0, cpos.y), _with_trees and key.x == 0, step)
 		var result = ChunkMesher.build_packed(data) if _pulling else ChunkMesher.build(data)
 
 		_mutex.lock()
-		_done.append([pos, lod, data, result])
+		_done.append([item[1], key, data, result])
 		_mutex.unlock()
+
+# --- Terminal ---------------------------------------------------------------
+
+func _run_command(text : String) -> void:
+	var parts := text.split(" ", false)
+	match parts[0]:
+		"help":
+			terminal.println("regenerate [seed] — régénère le monde (seed aléatoire si omise)")
+			terminal.println("seed              — affiche la seed du monde")
+			terminal.println("tp <x> <z>        — téléporte la caméra")
+			terminal.println("time <0..1>       — heure du cycle (0 aube, 0.25 midi, 0.75 minuit)")
+		"regenerate":
+			var s : int = int(parts[1]) if parts.size() > 1 else randi()
+			_regenerate(s)
+		"seed":
+			terminal.println("seed : %d" % _noise.seed)
+		"tp":
+			if parts.size() < 3:
+				terminal.println("usage : tp <x> <z>")
+				return
+			var x := float(parts[1])
+			var z := float(parts[2])
+			# hauteur via BiomeMap directement : le cache de TerrainHeight
+			# appartient au thread de génération
+			var h := BiomeMap.height_sample(_noise.seed, x, z)
+			camera.position = Vector3(x, maxf(h, WorldConfig.SEA_LEVEL) + 24.0, z)
+			terminal.println("téléporté en (%.0f, %.0f)" % [x, z])
+		"time":
+			if parts.size() < 2:
+				terminal.println("usage : time <0..1>")
+				return
+			sky.time = sky._time_from_percent(clampf(float(parts[1]), 0.0, 1.0))
+			terminal.println("heure réglée")
+		_:
+			terminal.println("commande inconnue : " + parts[0])
+
+# Nouveau monde : vide la file et les nœuds, change la seed (le cache de
+# TerrainHeight se vide tout seul au prochain échantillon : seed différente),
+# referme le brouillard et force un recenter. Les résultats en vol portent
+# l'ancien gen_id et seront jetés.
+func _regenerate(new_seed : int) -> void:
+	_gen_id += 1
+	_mutex.lock()
+	_work.clear()
+	_mutex.unlock()
+	for c in nodes.values():
+		c.queue_free()
+	nodes.clear()
+	_desired.clear()
+	_noise.seed = new_seed
+	_env.fog_depth_end = Chunk.width * Chunk.cube_size * 0.5
+	_env.fog_depth_begin = _env.fog_depth_end * 0.5
+	_chunks_dirty = true
+	last_center = Vector2i(1 << 30, 0)
+	terminal.println("nouveau monde, seed %d" % new_seed)
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -234,11 +359,11 @@ func _input(event: InputEvent) -> void:
 				_env.fog_enabled = not _env.fog_enabled
 			KEY_F3:
 				# état porté par Chunk.show_borders : le matériau partagé du
-				# chemin classique + le matériau par chunk du vertex pulling
+				# chemin classique + le matériau par nœud du vertex pulling
 				# (y compris ceux créés après l'appui, via apply_generated_packed)
 				Chunk.show_borders = not Chunk.show_borders
 				if Chunk.block_material != null:
 					Chunk.block_material.set_shader_parameter("show_chunk_borders", Chunk.show_borders)
-				for c in chunks.values():
+				for c in nodes.values():
 					if c.material_override is ShaderMaterial:
 						c.material_override.set_shader_parameter("show_chunk_borders", Chunk.show_borders)

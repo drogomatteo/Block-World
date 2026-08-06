@@ -26,11 +26,20 @@ const FACE_TOP := 0
 const FACE_BOTTOM := 1
 const FACE_SIDE := 2
 
+# Ids alignés sur WorldConfig.GRASS..ICE ; les couleurs sont AUSSI recopiées
+# en dur dans chunk_pulled.gdshader (COLOR_TOP/COLOR_SIDE) — tenir les deux
+# tables synchronisées. Les ids tiennent sur 4 bits (clé des plans + format
+# compacté du vertex pulling).
 const BLOCKS := {
 	0: {"name" : "Air", "solid" : false},
 	1: {"name" : "Grass", "solid" : true, "colors" : {FACE_TOP :Color(0.137, 0.902, 0.137, 1.0), FACE_BOTTOM : Color(0.137, 0.902, 0.137, 1.0), FACE_SIDE : Color(0.137, 0.902, 0.137, 1.0)}},
 	2: {"name" : "Wood", "solid" : true, "colors" : {FACE_TOP :Color(0.42, 0.27, 0.11, 1.0), FACE_BOTTOM : Color(0.42, 0.27, 0.11, 1.0), FACE_SIDE : Color(0.48, 0.31, 0.14, 1.0)}},
 	3: {"name" : "Leaves", "solid" : true, "colors" : {FACE_TOP :Color(0.10, 0.55, 0.12, 1.0), FACE_BOTTOM : Color(0.10, 0.55, 0.12, 1.0), FACE_SIDE : Color(0.10, 0.55, 0.12, 1.0)}},
+	4: {"name" : "Sand", "solid" : true, "colors" : {FACE_TOP :Color(0.76, 0.60, 0.30, 1.0), FACE_BOTTOM : Color(0.76, 0.60, 0.30, 1.0), FACE_SIDE : Color(0.70, 0.54, 0.26, 1.0)}},
+	5: {"name" : "Dirt", "solid" : true, "colors" : {FACE_TOP :Color(0.32, 0.20, 0.10, 1.0), FACE_BOTTOM : Color(0.32, 0.20, 0.10, 1.0), FACE_SIDE : Color(0.30, 0.18, 0.09, 1.0)}},
+	6: {"name" : "Rock", "solid" : true, "colors" : {FACE_TOP :Color(0.42, 0.42, 0.45, 1.0), FACE_BOTTOM : Color(0.42, 0.42, 0.45, 1.0), FACE_SIDE : Color(0.38, 0.38, 0.41, 1.0)}},
+	7: {"name" : "Snow", "solid" : true, "colors" : {FACE_TOP :Color(0.92, 0.94, 0.97, 1.0), FACE_BOTTOM : Color(0.92, 0.94, 0.97, 1.0), FACE_SIDE : Color(0.86, 0.88, 0.92, 1.0)}},
+	8: {"name" : "Ice", "solid" : true, "colors" : {FACE_TOP :Color(0.60, 0.80, 0.97, 1.0), FACE_BOTTOM : Color(0.60, 0.80, 0.97, 1.0), FACE_SIDE : Color(0.52, 0.72, 0.92, 1.0)}},
 }
 
 # L'ordre indexe les plans : 0 UP, 1 DOWN, 2 LEFT, 3 RIGHT, 4 FORWARD, 5 BACK
@@ -93,7 +102,7 @@ var _cell : float   # taille d'une cellule en mètres (CUBE_SIZE * pas de LOD)
 
 # Mode vertex pulling : les rectangles sont encodés au lieu d'émettre des
 # sommets. Encodage (LSB d'abord) :
-#   mot 0 : d(3) | flip(1) | id(2) | ao(8) | niveau(8) | b0(5)
+#   mot 0 : d(3) | flip(1) | id(4) | ao(8) | niveau(8) | b0(5)
 #   mot 1 : r0(8) | h-1(5) | w-1(8)
 var _packed_mode := false
 var _packed := PackedByteArray()
@@ -156,7 +165,7 @@ func _run(data : ChunkData) -> bool:
 	# l'id du bloc vers le shader (id / 255), qui ne teinte que l'herbe
 	for dir in DIRECTIONS:
 		var shaded := [Color()]
-		for id in range(1, 4):
+		for id in range(1, BLOCKS.size()):
 			var c := block_color_for_face(id, dir)
 			c.a = id / 255.0
 			shaded.append(c)
@@ -260,7 +269,7 @@ func _run(data : ChunkData) -> bool:
 	for d in range(6):
 		var dict : Dictionary = planes[d]
 		for key in dict:
-			_greedy_plane(d, key >> 10, (key >> 2) & 0xFF, key & 3, dict[key])
+			_greedy_plane(d, key >> 12, (key >> 4) & 0xFF, key & 15, dict[key])
 
 	return true
 
@@ -289,7 +298,7 @@ func _scatter_y(dict : Dictionary, m : int, w : int, runs : Array, z : int, xbit
 				any |= s
 			if any != 0:  # anneau vide (terrain plat) = cas majoritaire
 				ao = _ao_byte(0 if up else 1)
-		var key := ((bit - 1) << 10) | (ao << 2) | _id_at(runs, bit)
+		var key := ((bit - 1) << 12) | (ao << 4) | _id_at(runs, bit)
 		var rows = dict.get(key)
 		if rows == null:
 			rows = []
@@ -315,7 +324,7 @@ func _scatter_side(dict : Dictionary, m : int, w : int, runs : Array, level : in
 			else:
 				var wt := t / BITS
 				_ring[i] = (cols[base + coff[AO_RING_DCOL[i] + 1] + wt] >> (t - wt * BITS)) & 1
-		var key := (level << 10) | (_ao_byte(d) << 2) | _id_at(runs, bit)
+		var key := (level << 12) | (_ao_byte(d) << 4) | _id_at(runs, bit)
 		var rows = dict.get(key)
 		if rows == null:
 			rows = []
@@ -371,7 +380,7 @@ func _emit_quad(d : int, level : int, ao : int, id : int, b0 : int, r0 : int, h 
 		var flip := 1 if f0 + f2 > ((ao >> 2) & 3) + ((ao >> 6) & 3) else 0
 		var o := _quad_count * 8
 		_packed.resize(o + 8)
-		_packed.encode_u32(o, d | (flip << 3) | (id << 4) | (ao << 6) | (level << 14) | (b0 << 22))
+		_packed.encode_u32(o, d | (flip << 3) | (id << 4) | (ao << 8) | (level << 16) | (b0 << 24))
 		_packed.encode_u32(o + 4, r0 | ((h - 1) << 8) | ((w - 1) << 13))
 		_quad_count += 1
 		return

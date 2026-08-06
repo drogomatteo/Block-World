@@ -21,10 +21,24 @@ static func compute_tree_blocks(noise : FastNoiseLite, chunk_position : Vector3i
 				place_tree(blocks, noise, gx, gz)
 	return blocks
 
+# Chance d'arbre par colonne selon le biome dominant (ordre de BiomeMap :
+# montagnes, plaines, neige, océan, désert). Plaines : peu d'arbres ;
+# montagnes : très rares, et jamais au-dessus de la ligne de neige ; océan :
+# seulement sur les îles émergées (plus dense, effet oasis) ; neige et
+# désert : aucun.
+const CHANCE_BY_BIOME := [0.0015, 0.003, 0.0, WorldConfig.TREE_CHANCE, 0.0]
+
 static func tree_at(noise : FastNoiseLite, gx : int, gz : int) -> bool:
+	var chance : float = CHANCE_BY_BIOME[TerrainHeight.biome_sample(noise, gx, gz)]
+	if chance <= 0.0:
+		return false
+	var ground := TerrainHeight.height_at(noise, gx, gz)
+	# jamais les pieds dans l'eau, ni dans la neige des sommets
+	if ground <= WorldConfig.SEA_LEVEL + 1 or ground >= WorldConfig.SNOW_LINE - 4:
+		return false
 	var r := RandomNumberGenerator.new()
 	r.seed = column_seed(noise, gx, gz, 0)
-	return r.randf() < WorldConfig.TREE_CHANCE
+	return r.randf() < chance
 
 static func place_tree(blocks : Dictionary, noise : FastNoiseLite, gx : int, gz : int) -> void:
 	var ground := TerrainHeight.height_at(noise, gx, gz)

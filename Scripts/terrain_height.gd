@@ -26,12 +26,30 @@ static func noise_at(noise : FastNoiseLite, gx : int, gz : int) -> float:
 	var tx := float(gx - cx * STEP) / STEP
 	var tz := float(gz - cz * STEP) / STEP
 	return lerpf(
-		lerpf(_sample(noise, cx, cz), _sample(noise, cx + 1, cz), tx),
-		lerpf(_sample(noise, cx, cz + 1), _sample(noise, cx + 1, cz + 1), tx),
+		lerpf(_sample(noise, cx, cz).x, _sample(noise, cx + 1, cz).x, tx),
+		lerpf(_sample(noise, cx, cz + 1).x, _sample(noise, cx + 1, cz + 1).x, tx),
 		tz
 	)
 
-static func _sample(noise : FastNoiseLite, cx : int, cz : int) -> float:
+# Biome dominant de la colonne, EXACT au bloc près : si les 4 échantillons
+# qui encadrent la colonne sont d'accord (cas très majoritaire), c'est le
+# leur (cache, coût nul) ; sinon — zone frontière — le poids Worley est
+# recalculé à la position exacte du bloc (hash + distances, sans bruit).
+# La frontière de matériau est ainsi une courbe nette, jamais crénelée au
+# pas d'up-sampling.
+static func biome_sample(noise : FastNoiseLite, gx : int, gz : int) -> int:
+	var cx := floori(float(gx) / STEP)
+	var cz := floori(float(gz) / STEP)
+	var b : float = _sample(noise, cx, cz).y
+	if b == _sample(noise, cx + 1, cz).y \
+			and b == _sample(noise, cx, cz + 1).y \
+			and b == _sample(noise, cx + 1, cz + 1).y:
+		return int(b)
+	return BiomeMap.biome_exact(noise.seed, gx, gz)
+
+# Échantillon caché : Vector2(hauteur, biome dominant) au point de la grille
+# d'up-sampling.
+static func _sample(noise : FastNoiseLite, cx : int, cz : int) -> Vector2:
 	if not _cache_ready or noise.seed != _cache_seed:
 		_cache.clear()
 		_cache_seed = noise.seed
@@ -39,6 +57,10 @@ static func _sample(noise : FastNoiseLite, cx : int, cz : int) -> float:
 	var key := Vector2i(cx, cz)
 	var value = _cache.get(key)
 	if value == null:
-		value = BiomeMap.height_sample(noise.seed, cx * STEP, cz * STEP)
+		# borne mémoire : avec un rayon de rendu de 100 chunks le cache peut
+		# grossir sans limite ; on le vide et la localité le remplit à nouveau
+		if _cache.size() > 262144:
+			_cache.clear()
+		value = BiomeMap.sample(noise.seed, cx * STEP, cz * STEP)
 		_cache[key] = value
 	return value

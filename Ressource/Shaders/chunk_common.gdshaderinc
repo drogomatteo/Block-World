@@ -5,6 +5,7 @@
 // géométrie produisent exactement ces entrées.
 
 const int GRASS_ID = 1;
+const int SAND_ID = 4;
 
 uniform float block_size = 1.0;  // WorldConfig.CUBE_SIZE
 uniform float tint_amount : hint_range(0.0, 1.0) = 1.0;   // 0 = couleur du maillage
@@ -12,7 +13,13 @@ uniform float patch_size = 24.0;                          // taille des taches, 
 uniform float block_jitter : hint_range(0.0, 1.0) = 0.3;  // variation par bloc
 uniform vec3 grass_dry : source_color = vec3(0.55, 0.75, 0.22);   // herbe sèche
 uniform vec3 grass_lush : source_color = vec3(0.13, 0.80, 0.25);  // herbe grasse
+uniform float sand_jitter : hint_range(0.0, 0.3) = 0.08;  // variance du sable (faible)
 uniform float ao_strength : hint_range(0.0, 1.0) = 1.0;  // ambient occlusion
+
+// Lumière du ciel sur le terrain : les chunks sont unshaded, donc le cycle
+// jour/nuit (sky_cycle.gd) écrit chaque frame ce global — blanc en journée,
+// bleu sombre la nuit, teinté chaud à l'aube et au crépuscule.
+global uniform vec3 sky_terrain_light;
 
 // Débug F3 : peint les frontières de chunks (lignes au sol, murs entiers pour
 // les faces posées exactement sur le plan frontière).
@@ -45,11 +52,11 @@ float value_noise(vec2 p) {
 void fragment() {
 	vec3 albedo = COLOR.rgb;
 	int block_id = int(round(COLOR.a * 255.0));
+	// Centre du bloc : un demi-bloc vers l'intérieur depuis la face, puis
+	// arrondi à la grille -> teinte plate par bloc, sans clignotement aux
+	// frontières. cell.xz seul : les flancs d'une colonne suivent son dessus.
+	vec3 cell = floor(world_pos / block_size - world_normal * 0.5 + 0.5);
 	if (block_id == GRASS_ID) {
-		// Centre du bloc : un demi-bloc vers l'intérieur depuis la face, puis
-		// arrondi à la grille -> teinte plate par bloc, sans clignotement aux
-		// frontières. cell.xz seul : les flancs d'une colonne suivent son dessus.
-		vec3 cell = floor(world_pos / block_size - world_normal * 0.5 + 0.5);
 		float patches = value_noise(cell.xz / patch_size);
 		float jitter = (cell_hash(cell.xz) - 0.5) * block_jitter;
 		float v = clamp(patches + jitter, 0.0, 1.0);
@@ -61,11 +68,16 @@ void fragment() {
 			: (abs(world_normal.x) > 0.5 ? 0.6 : 0.8));
 		vec3 grass = mix(grass_dry, grass_lush, v) * shade;
 		albedo = mix(albedo, grass, tint_amount);
+	} else if (block_id == SAND_ID) {
+		// sable saharien : légère variance de luminance par bloc, sans taches
+		albedo *= 1.0 + (cell_hash(cell.xz) - 0.5) * sand_jitter;
 	}
 	// AO voxel : facteur de lumière du coin dans UV.x, interpolé sur la face
 	// par le GPU. Appliquée APRÈS la teinte d'herbe (qui REMPLACE la couleur),
 	// pour assombrir tous les blocs uniformément.
 	albedo *= mix(1.0, UV.x, ao_strength);
+	// nuit / jour, avant les bordures de débug (qui restent lisibles de nuit)
+	albedo *= sky_terrain_light;
 	if (show_chunk_borders) {
 		vec2 f = fract(world_pos.xz / chunk_span);
 		vec2 dist = min(f, 1.0 - f) * chunk_span;  // distance monde à la frontière

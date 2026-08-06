@@ -7,14 +7,17 @@ extends RefCounted
 # (extremity bound), donc un chunk de hauteur 256 ne stocke que ses ~20
 # premiers mètres. Un chunk sans aucun bloc a des colonnes vides.
 #
-# LOD : au pas `step` (1, 2, 4…), la grille est en CELLULES de step³ blocs
-# (toutes les coordonnées locales de cette classe sont alors en cellules).
-# Une cellule prend le MAX des 4 coins de hauteur : le terrain grossier
-# enveloppe le fin, les raccords entre niveaux se recouvrent au lieu de se
-# fissurer. Les colonnes de marge restent VIDES quand step > 1 : le mesher
-# émet alors tous les murs de bordure, ce qui bouche les fissures restantes
-# (surcoût invisible, les murs sont enfouis chez le voisin). Pas d'arbres
-# au-delà du pas 1.
+# LOD : au pas `step` (1, 2, 4… puissances de 2), le nœud couvre step×step
+# CHUNKS avec une grille FIXE de W×D cellules de step³ blocs (toutes les
+# coordonnées locales de cette classe sont alors en cellules) — un nœud
+# lointain du quadtree de streaming coûte le même maillage qu'un chunk.
+# `position` reste en coordonnées de CHUNKS (l'origine du nœud, alignée sur
+# step). Une cellule prend le MAX des 4 coins de hauteur : le terrain
+# grossier enveloppe le fin, les raccords entre niveaux se recouvrent au
+# lieu de se fissurer. Les colonnes de marge restent VIDES quand step > 1 :
+# le mesher émet alors tous les murs de bordure, ce qui bouche les fissures
+# restantes (surcoût invisible, les murs sont enfouis chez le voisin). Pas
+# d'arbres au-delà du pas 1.
 
 const W : int = WorldConfig.WIDTH
 const H : int = WorldConfig.HEIGHT
@@ -41,9 +44,9 @@ func col_index(x : int, z : int) -> int:
 func build(noise : FastNoiseLite, position : Vector3i, with_trees : bool, lod_step : int = 1) -> void:
 	chunk_position = position
 	step = lod_step
-	w_cells = W / step
-	h_cells = H / step
-	d_cells = D / step
+	w_cells = W          # grille toujours W×D cellules : le nœud grandit avec step
+	h_cells = H / step   # la hauteur du monde, elle, est fixe
+	d_cells = D
 	d2 = d_cells + 2
 	col_tops.resize((w_cells + 2) * d2)
 	run_start.resize((w_cells + 2) * d2 + 1)
@@ -76,6 +79,7 @@ func build(noise : FastNoiseLite, position : Vector3i, with_trees : bool, lod_st
 				continue
 			var gx := position.x * W + x * step
 			var gz := position.z * D + z * step
+			var biome := TerrainHeight.biome_sample(noise, gx, gz)
 			var terrain_top : int
 			if step == 1:
 				terrain_top = TerrainHeight.height_at(noise, gx, gz) - base_y
@@ -90,15 +94,26 @@ func build(noise : FastNoiseLite, position : Vector3i, with_trees : bool, lod_st
 			col_tops[ci] = terrain_top
 			var t := mini(terrain_top, h_cells - 1)
 
-			if not tree_cols.has(ci):
-				# colonne pleine du pied (y = -1) au sommet du terrain
+			if step > 1:
+				# LOD : une seule plage, couleur du bloc de surface du biome
+				# (seul le dessus est visible de loin)
 				if t >= -1:
-					run_data.push_back(1)
+					run_data.push_back(BiomeMap.surface_block(
+						noise.seed, gx, gz, biome, base_y + t * step))
 					run_data.push_back(t + 2)
 					if t > top_solid_y:
 						top_solid_y = t
+			elif not tree_cols.has(ci):
+				# strates du biome, du pied (y = -1) au sommet du terrain
+				if t >= -1:
+					for run in BiomeMap.strata(noise.seed, gx, gz, biome, base_y + t):
+						run_data.push_back(run[0])
+						run_data.push_back(run[1])
+					if t > top_solid_y:
+						top_solid_y = t
 			else:
-				var last_solid := _encode_column_with_trees(t, tree_cols[ci])
+				var srt := BiomeMap.strata(noise.seed, gx, gz, biome, base_y + t)
+				var last_solid := _encode_column_with_trees(t, srt, tree_cols[ci])
 				if last_solid > top_solid_y:
 					top_solid_y = last_solid
 			ci += 1
@@ -107,8 +122,9 @@ func build(noise : FastNoiseLite, position : Vector3i, with_trees : bool, lod_st
 	top_solid_y = mini(top_solid_y, h_cells - 1)
 
 # Colonne mixte terrain + arbre : reconstruite dans un petit tampon borné au
-# plus haut bloc, puis encodée en plages. Renvoie le dernier y plein.
-func _encode_column_with_trees(terrain_top : int, cells : Array) -> int:
+# plus haut bloc, puis encodée en plages. Le terrain vient des strates du
+# biome (`terrain_runs`, cf. BiomeMap.strata). Renvoie le dernier y plein.
+func _encode_column_with_trees(terrain_top : int, terrain_runs : Array, cells : Array) -> int:
 	var span_top := terrain_top
 	for c in cells:
 		span_top = maxi(span_top, c.x)
@@ -116,8 +132,12 @@ func _encode_column_with_trees(terrain_top : int, cells : Array) -> int:
 
 	var buf := PackedByteArray()
 	buf.resize(span_top + 2)  # index i <-> y = i - 1
-	for i in range(mini(terrain_top, span_top) + 2):
-		buf[i] = 1
+	var fill := 0
+	for run in terrain_runs:
+		var stop : int = mini(fill + run[1], buf.size())
+		while fill < stop:
+			buf[fill] = run[0]
+			fill += 1
 	for c in cells:
 		if c.x <= span_top and buf[c.x + 1] == 0:
 			buf[c.x + 1] = c.y

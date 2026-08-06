@@ -7,7 +7,7 @@ extends Camera3D
 @export var speed : float = 20.0
 
 const SPEED_MIN : float = 2.0
-const SPEED_MAX : float = 200.0
+const SPEED_MAX : float = 800.0  # monde de 3 200 blocs de rayon : il faut traverser
 
 var yaw : float = 0.0
 var pitch : float = 0.0
@@ -20,7 +20,9 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
 		match event.button_index:
 			MOUSE_BUTTON_LEFT:
-				Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+				# ne pas capturer si l'interface a le focus (terminal ouvert)
+				if get_viewport().gui_get_focus_owner() == null:
+					Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 			MOUSE_BUTTON_WHEEL_UP:
 				speed = minf(speed * 1.2, SPEED_MAX)
 			MOUSE_BUTTON_WHEEL_DOWN:

@@ -95,9 +95,10 @@ func apply_generated_packed(chunk_data : ChunkData, packed : Dictionary) -> void
 	material_override = mat
 	self.mesh = _counter_mesh(count)
 	# les sommets du maillage compteur sont tous à zéro : l'AABB de culling
-	# doit couvrir l'emprise réelle du chunk
+	# doit couvrir l'emprise réelle du nœud (step×step chunks au LOD)
+	var s : int = chunk_data.step
 	custom_aabb = AABB(Vector3(-2, -2, -2),
-		Vector3(width + 4, height + 4, depth + 4) * cube_size)
+		Vector3(width * s + 4, height + 4, depth * s + 4) * cube_size)
 
 # Plus petit maillage compteur couvrant `count` rectangles (créé à la demande,
 # thread principal uniquement).

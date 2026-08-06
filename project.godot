@@ -111,3 +111,10 @@ Options={
 [rendering]
 
 rendering_device/driver.windows="d3d12"
+
+[shader_globals]
+
+sky_terrain_light={
+"type": "vec3",
+"value": Vector3(1, 1, 1)
+}

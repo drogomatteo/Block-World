@@ -1,14 +1,45 @@
-[gd_scene format=3 uid="uid://dkunb6ch24p5u"]
+[gd_scene load_steps=16 format=3 uid="uid://dkunb6ch24p5u"]
 
 [ext_resource type="Script" uid="uid://607y1r8gxj71" path="res://Scripts/main.gd" id="1_mijtf"]
 [ext_resource type="Script" uid="uid://lll311wdu3a5" path="res://Scripts/fly_camera.gd" id="2_orbit"]
+[ext_resource type="Shader" path="res://Ressource/Shaders/sky.gdshader" id="3_sky"]
+[ext_resource type="Script" path="res://Scripts/sky_cycle.gd" id="4_cycle"]
+[ext_resource type="Shader" path="res://Ressource/Shaders/water.gdshader" id="5_water"]
+[ext_resource type="Script" path="res://Scripts/terminal.gd" id="6_term"]
 
-[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_ahwsu"]
-ground_bottom_color = Color(0.6463, 0.6558, 0.6708, 1)
-ground_horizon_color = Color(0.6463, 0.6558, 0.6708, 1)
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_perlin"]
+noise_type = 3
+frequency = 0.05
+
+[sub_resource type="NoiseTexture3D" id="NoiseTexture3D_noise"]
+seamless = true
+noise = SubResource("FastNoiseLite_perlin")
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_voronoi"]
+noise_type = 2
+frequency = 0.08
+cellular_return_type = 1
+
+[sub_resource type="NoiseTexture3D" id="NoiseTexture3D_voronoi"]
+seamless = true
+noise = SubResource("FastNoiseLite_voronoi")
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_sky"]
+shader = ExtResource("3_sky")
+shader_parameter/noise3_tex = SubResource("NoiseTexture3D_noise")
+shader_parameter/voronoi3_tex = SubResource("NoiseTexture3D_voronoi")
 
 [sub_resource type="Sky" id="Sky_24a1y"]
-sky_material = SubResource("ProceduralSkyMaterial_ahwsu")
+sky_material = SubResource("ShaderMaterial_sky")
+process_mode = 2
+radiance_size = 2
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_water"]
+shader = ExtResource("5_water")
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_water"]
+material = SubResource("ShaderMaterial_water")
+size = Vector2(8192, 8192)
 
 [sub_resource type="Environment" id="Environment_rkiyi"]
 background_mode = 2
@@ -25,7 +56,21 @@ script = ExtResource("1_mijtf")
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=1320169777]
 transform = Transform3D(1, 0, 0, 0, 0.921061, 0.389418, 0, -0.389418, 0.921061, 0, 24, 0)
+far = 8000.0
 script = ExtResource("2_orbit")
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=130495272]
 environment = SubResource("Environment_rkiyi")
+
+[node name="Water" type="MeshInstance3D" parent="."]
+mesh = SubResource("PlaneMesh_water")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+
+[node name="SkyCycle" type="Node" parent="." node_paths=PackedStringArray("sun", "world_environment")]
+script = ExtResource("4_cycle")
+sun = NodePath("../Sun")
+world_environment = NodePath("../WorldEnvironment")
+
+[node name="Terminal" type="CanvasLayer" parent="."]
+script = ExtResource("6_term")
