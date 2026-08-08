@@ -46,35 +46,49 @@ static func place_tree(blocks : Dictionary, noise : FastNoiseLite, gx : int, gz 
 	r.seed = column_seed(noise, gx, gz, 1)
 	var trunk_h := r.randi_range(WorldConfig.TRUNK_MIN, WorldConfig.TRUNK_MAX)
 	var top := ground + trunk_h
+	var max_top := top + ceili(trunk_h/4)
 
 	for y in range(ground + 1, top + 1):
 		blocks[Vector3i(gx, y, gz)] = WOOD
 
+
+	var lr := WorldConfig.LEAF_RADIUS
+
 	# couronne massive : 3 couches larges (rayon LEAF_RADIUS), coins durs
 	# retirés et pourtour rogné au RNG pour arrondir la silhouette
-	var lr := WorldConfig.LEAF_RADIUS
-	for y in [top - 2, top - 1, top]:
+	for y in range(top, max_top + 1):
 		for dx in range(-lr, lr + 1):
 			for dz in range(-lr, lr + 1):
 				if absi(dx) == lr and absi(dz) == lr:
 					continue
-				if absi(dx) + absi(dz) >= lr + 2 and r.randf() < 0.5:
+				if absi(dx) + absi(dz) >= lr + 2 and r.randf() < 0.07:
 					continue
 				set_leaf(blocks, Vector3i(gx + dx, y, gz + dz))
 
-	# épaulement plus étroit puis chapeau
-	for dx in range(-2, 3):
-		for dz in range(-2, 3):
-			if absi(dx) == 2 and absi(dz) == 2:
+	# épaulement plus étroit puis chapeau (deux couches)
+	for dx in range(-lr + 1, lr):
+		for dz in range(-lr + 1, lr):
+			if absi(dx) == lr - 1 and absi(dz) == lr - 1:
 				continue
-			set_leaf(blocks, Vector3i(gx + dx, top + 1, gz + dz))
+			if r.randf() < 0.07:
+				continue
+			set_leaf(blocks, Vector3i(gx + dx, max_top + 1, gz + dz))
 
-	for dx in range(-1, 2):
-		for dz in range(-1, 2):
-			if absi(dx) == 1 and absi(dz) == 1:
+	for dx in range(-lr + 2, lr - 1):
+		for dz in range(-lr + 2, lr - 1):
+			if absi(dx) >= lr - 3 and absi(dz) >= lr - 3:
 				continue
-			set_leaf(blocks, Vector3i(gx + dx, top + 2, gz + dz))
-	set_leaf(blocks, Vector3i(gx, top + 3, gz))
+			if r.randf() < 0.07:
+				continue
+			set_leaf(blocks, Vector3i(gx + dx, max_top + 2, gz + dz))
+
+	for dx in range(-lr + 3, lr - 2):
+		for dz in range(-lr + 3, lr - 2):
+			if absi(dx) >= lr - 4 and absi(dz) >= lr - 4:
+				continue
+			if r.randf() < 0.07:
+				continue
+			set_leaf(blocks, Vector3i(gx + dx, max_top + 3, gz + dz))
 
 static func set_leaf(blocks : Dictionary, pos : Vector3i) -> void:
 	if not blocks.has(pos):

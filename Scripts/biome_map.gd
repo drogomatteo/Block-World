@@ -35,26 +35,26 @@ const NOISES := [
 # Réglages de relief (blocs)
 # bases terrestres >= SEA_LEVEL + 2 + amplitude : la règle « plage » de
 # strata() ne doit jamais mordre au coeur d'un biome terrestre
-const PLAINES_BASE := 15.0
+const PLAINES_BASE := 25.0
 const PLAINES_AMP := 3.0
-const NEIGE_BASE := 17.0
-const NEIGE_AMP := 5.0
-const MONT_BASE := 16.0
-const MONT_AMP := 56.0        # hauteur max des pics au-dessus de la base
-const MONT_SHARP := 2.0       # exposant : > 1 = vallées larges, pics rares
-const OCEAN_FLOOR := 3.0      # fond marin moyen (sous SEA_LEVEL = profond)
-const OCEAN_FLOOR_AMP := 2.0
+const NEIGE_BASE := 30.0
+const NEIGE_AMP := 1.0
+const MONT_BASE := 50.0
+const MONT_AMP := 50.0        # hauteur max des pics au-dessus de la base
+const MONT_SHARP := 1.5       # exposant : > 1 = vallées larges, pics rares
+const OCEAN_FLOOR := -20.0      # fond marin moyen (sous SEA_LEVEL = profond)
+const OCEAN_FLOOR_AMP := 5.0
 # Îles : seuil sur le bruit décalé (fractal 3 octaves : dépasse rarement
 # ~0,6, un seuil haut ne sortirait jamais de l'eau) ; la rampe est bornée à
 # ISLAND_FULL pour que les rares maxima donnent des îles franches.
-const ISLAND_THRESHOLD := 0.28
-const ISLAND_FULL := 0.55
+const ISLAND_THRESHOLD := 0.35
+const ISLAND_FULL := 0.65
 const ISLAND_AMP := 26.0
-const DESERT_BASE := 13.0
+const DESERT_BASE := 20.0
 const DESERT_AMP := 1.5
-const DUNE_AMP := 9.0         # hauteur des crêtes de dunes
+const DUNE_AMP := 15.0         # hauteur des crêtes de dunes
 
-const CELL := 512.0   # taille d'une cellule de biome, en blocs (16 chunks)
+const CELL := 2048.0   # taille d'une cellule de biome, en blocs (16 chunks)
 static var K := 6.0   # précision du fondu entre cellules (voir en-tête)
 
 # Hauteur mélangée + biome dominant au point monde (x, z) : Vector2(hauteur

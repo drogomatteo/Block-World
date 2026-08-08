@@ -33,9 +33,9 @@ const SNOW_LINE : int = 45
 const NOISE_STEP : int = 4
 
 # Arbres : rares mais massifs — troncs hauts, large couronne étagée
-const TREE_CHANCE : float = 0.008
-const TRUNK_MIN : int = 6
-const TRUNK_MAX : int = 10
-const LEAF_RADIUS : int = 3
+const TREE_CHANCE : float = 0.001
+const TRUNK_MIN : int = 8
+const TRUNK_MAX : int = 25
+const LEAF_RADIUS : int = 5
 # marge = rayon max du feuillage + 1 pour l'anneau de culling des faces
 const TREE_MARGIN : int = LEAF_RADIUS + 1
