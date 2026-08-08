@@ -163,15 +163,17 @@ func _init() -> void:
 	# --- Strates par biome (fonctions pures) -------------------------------
 	var world_seed : int = chunk.noise.seed
 	var srt_ok := true
-	var srt : Array = BiomeMap.strata(world_seed, 10, 10, BiomeMap.DESERT, 15)
+	var srt : Array = BiomeMap.strata(world_seed, 10, 10, BiomeMap.DESERT, 45)
 	srt_ok = srt_ok and srt[-1][0] == WorldConfig.SAND and srt[0][0] == WorldConfig.ROCK
-	srt = BiomeMap.strata(world_seed, 10, 10, BiomeMap.PLAINES, 15)
+	srt = BiomeMap.strata(world_seed, 10, 10, BiomeMap.PLAINES, 45)
 	srt_ok = srt_ok and srt[-1][0] == WorldConfig.GRASS and srt[0][0] == WorldConfig.DIRT
-	srt = BiomeMap.strata(world_seed, 10, 10, BiomeMap.NEIGE, 15)
+	srt = BiomeMap.strata(world_seed, 10, 10, BiomeMap.NEIGE, 45)
 	srt_ok = srt_ok and srt[-1][0] == WorldConfig.SNOW
-	srt = BiomeMap.strata(world_seed, 10, 10, BiomeMap.MONTAGNES, 30)
-	srt_ok = srt_ok and srt[-1][0] == WorldConfig.DIRT and srt[0][0] == WorldConfig.ROCK
-	srt = BiomeMap.strata(world_seed, 10, 10, BiomeMap.MONTAGNES, 60)
+	srt = BiomeMap.strata(world_seed, 10, 10, BiomeMap.MONTAGNES, 70)
+	srt_ok = srt_ok and srt[-1][0] == WorldConfig.ROCK and srt[0][0] == WorldConfig.ROCK
+	srt = BiomeMap.strata(world_seed, 10, 10, BiomeMap.MONTAGNES, 48)
+	srt_ok = srt_ok and srt[-1][0] == WorldConfig.GRASS  # fond de vallée vert
+	srt = BiomeMap.strata(world_seed, 10, 10, BiomeMap.MONTAGNES, 110)
 	srt_ok = srt_ok and (srt[-1][0] == WorldConfig.SNOW or srt[-1][0] == WorldConfig.ICE)
 	srt = BiomeMap.strata(world_seed, 10, 10, BiomeMap.OCEAN, 4)
 	srt_ok = srt_ok and srt[-1][0] == WorldConfig.SAND
@@ -180,33 +182,35 @@ func _init() -> void:
 	check("strates : bloc de surface conforme par biome", srt_ok)
 	var total_ok := true
 	for b in range(5):
-		var s2 : Array = BiomeMap.strata(world_seed, 3, 7, b, 20)
+		var s2 : Array = BiomeMap.strata(world_seed, 3, 7, b, 50)
 		var n2 := 0
 		for run in s2:
 			n2 += run[1]
-		total_ok = total_ok and n2 == 22
+		total_ok = total_ok and n2 == 52
 	check("strates : longueur totale = sommet + 2 (les 5 biomes)", total_ok)
 
 	# --- Arbres ------------------------------------------------------------
 	# Les arbres dépendent du biome : chercher une zone 2×2 chunks de plaines
-	# (spirale de Chebyshev depuis l'origine ; un anneau de cellules Worley en
-	# contient toujours une à portée).
+	# près du POINT CARACTÉRISTIQUE d'une cellule Worley de plaines (spirale
+	# de CELLULES : indépendant de la taille CELL des biomes).
 	var pc := Vector2i.ZERO
 	var found_plains := false
-	for r in range(0, 60):
+	for r in range(0, 12):
 		for cx in range(-r, r + 1):
 			for cz in range(-r, r + 1):
 				if maxi(absi(cx), absi(cz)) != r:
 					continue  # seulement l'anneau du rayon r
+				var f : Vector2 = BiomeMap._feature(world_seed, cx, cz)
+				var c := Vector2i(floori(f.x / Chunk.width), floori(f.y / Chunk.depth))
 				var ok_zone := true
 				for corner in [Vector2i(0, 0), Vector2i(2, 0), Vector2i(0, 2), Vector2i(2, 2), Vector2i(1, 1)]:
 					if BiomeMap.biome_at(world_seed,
-							(cx + corner.x) * Chunk.width,
-							(cz + corner.y) * Chunk.depth) != BiomeMap.PLAINES:
+							(c.x + corner.x) * Chunk.width,
+							(c.y + corner.y) * Chunk.depth) != BiomeMap.PLAINES:
 						ok_zone = false
 						break
 				if ok_zone:
-					pc = Vector2i(cx, cz)
+					pc = c
 					found_plains = true
 					break
 			if found_plains:
@@ -266,34 +270,6 @@ func _init() -> void:
 			if base.is_air(x, Chunk.height, z) != (above.block_at(x, 0, z) == 0):
 				border_ok = false
 	check("frontières cohérentes avec les voisins (est + dessus)", border_ok)
-
-	# --- LOD ---------------------------------------------------------------
-	# Aux pas 2 et 4 : un nœud couvre pas×pas chunks avec une grille fixe de
-	# 32×32 cellules de pas blocs — maillage valide, coordonnées dans
-	# l'emprise élargie du nœud et alignées sur la grille du pas.
-	var lod_ok := true
-	for lstep in [2, 4]:
-		var ld := ChunkData.new()
-		ld.build(chunk.noise, Vector3i(0, 0, 0), false, lstep)
-		var lmesh := ChunkMesher.build(ld)
-		if lmesh == null:
-			lod_ok = false
-			continue
-		var lv: PackedVector3Array = lmesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-		if lv.size() % 4 != 0 or lv.is_empty():
-			lod_ok = false
-		var fs := float(lstep)
-		var span := float(Chunk.width * lstep)
-		for v in lv:
-			if v.x < -fs or v.x > span + fs or v.z < -fs or v.z > span + fs:
-				lod_ok = false
-				break
-			# sommets à la demi-cellule près (tolérance : compression 16 bits)
-			for c in [v.x / fs, v.y / fs, v.z / fs]:
-				var fr : float = absf(fposmod(c + 0.5, 1.0))
-				if minf(fr, 1.0 - fr) > 0.05:
-					lod_ok = false
-	check("LOD 2 et 4 : nœuds pas×pas chunks valides et alignés", lod_ok)
 
 	# --- Déterminisme ------------------------------------------------------
 	var chunk2 = load("res://Scènes/Cubes/Cubes.tscn").instantiate()

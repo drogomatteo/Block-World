@@ -32,29 +32,36 @@ const NOISES := [
 	preload("res://Ressource/Noise/biome_desert.tres"),
 ]
 
-# Réglages de relief (blocs)
+# Réglages de relief (blocs) — mer HAUTE (SEA_LEVEL = 40) : les océans
+# descendent ~35 blocs sous la surface, les bases terrestres sont calées
+# juste au-dessus de la mer.
 # bases terrestres >= SEA_LEVEL + 2 + amplitude : la règle « plage » de
 # strata() ne doit jamais mordre au coeur d'un biome terrestre
-const PLAINES_BASE := 15.0
+const PLAINES_BASE := 45.0
 const PLAINES_AMP := 3.0
-const NEIGE_BASE := 17.0
+const NEIGE_BASE := 47.0
 const NEIGE_AMP := 5.0
-const MONT_BASE := 16.0
-const MONT_AMP := 56.0        # hauteur max des pics au-dessus de la base
+const MONT_BASE := 46.0
+const MONT_AMP := 120.0       # hauteur max des pics au-dessus de la base (~165)
 const MONT_SHARP := 2.0       # exposant : > 1 = vallées larges, pics rares
-const OCEAN_FLOOR := 3.0      # fond marin moyen (sous SEA_LEVEL = profond)
-const OCEAN_FLOOR_AMP := 2.0
+const OCEAN_FLOOR := 4.0      # fond marin moyen : ~35 blocs sous la mer
+const OCEAN_FLOOR_AMP := 3.0
 # Îles : seuil sur le bruit décalé (fractal 3 octaves : dépasse rarement
 # ~0,6, un seuil haut ne sortirait jamais de l'eau) ; la rampe est bornée à
-# ISLAND_FULL pour que les rares maxima donnent des îles franches.
-const ISLAND_THRESHOLD := 0.28
-const ISLAND_FULL := 0.55
-const ISLAND_AMP := 26.0
-const DESERT_BASE := 13.0
+# ISLAND_FULL pour que les rares maxima donnent des îles franches. AMP calée
+# sur la nouvelle profondeur : il faut ~36 blocs pour émerger.
+const ISLAND_THRESHOLD := 0.25
+const ISLAND_FULL := 0.5
+const ISLAND_AMP := 70.0
+const DESERT_BASE := 43.0
 const DESERT_AMP := 1.5
 const DUNE_AMP := 9.0         # hauteur des crêtes de dunes
 
-const CELL := 512.0   # taille d'une cellule de biome, en blocs (16 chunks)
+# Taille d'une cellule de biome, en blocs (64 chunks) : des biomes MASSIFS —
+# le disque de rendu (rayon 3200) tient dans ~2 cellules, chaque biome est un
+# continent. Le fondu exp(-K·d/CELL) s'élargit d'autant (transitions ~200-400
+# blocs), les frontières de MATÉRIAU restent nettes (biome_exact).
+const CELL := 2048.0
 static var K := 6.0   # précision du fondu entre cellules (voir en-tête)
 
 # Hauteur mélangée + biome dominant au point monde (x, z) : Vector2(hauteur
@@ -133,8 +140,9 @@ static func _biome_height(b : int, x : float, z : float) -> float:
 # top + 2. Le biome décide du bloc de surface et du remplissage :
 #   plaines   : terre + 1 bloc d'herbe
 #   désert    : roche + 4 blocs de sable
-#   montagnes : roche + 3 blocs de terre ; neige (ou glace par plaques de
-#               glacier) au lieu de la terre au-dessus de la ligne de neige
+#   montagnes : pierre nue (gris) ; herbe sur terre dans les fonds de vallée
+#               (sous _grass_line) ; neige (ou glace par plaques de glacier)
+#               au-dessus de la ligne de neige
 #   neige     : terre + 3 blocs de neige
 #   océan     : sable ; les îles qui émergent gagnent 1 bloc d'herbe
 static func strata(world_seed : int, gx : int, gz : int, biome : int, top : int) -> Array:
@@ -161,8 +169,14 @@ static func strata(world_seed : int, gx : int, gz : int, biome : int, top : int)
 			surf_len = 3
 			if top >= _snow_line(gx, gz):
 				surf = WorldConfig.ICE if _glacier(gx, gz) else WorldConfig.SNOW
+			elif top < _grass_line(gx, gz):
+				# fonds de vallée verdoyants : herbe sur terre, comme une plaine
+				fill = WorldConfig.DIRT
+				surf = WorldConfig.GRASS
+				surf_len = 1
 			else:
-				surf = WorldConfig.DIRT
+				# flancs et sommets : pierre nue (surf == fill -> une seule plage)
+				surf = WorldConfig.ROCK
 		NEIGE:
 			surf = WorldConfig.SNOW
 			surf_len = 3
@@ -186,6 +200,12 @@ static func surface_block(world_seed : int, gx : int, gz : int, biome : int, top
 # Ligne de neige jitterée par bruit (une ligne droite trahit le procédural).
 static func _snow_line(gx : int, gz : int) -> int:
 	return WorldConfig.SNOW_LINE + int(NOISES[PLAINES].get_noise_2d(gx * 5.0, gz * 5.0) * 4.0)
+
+# Altitude sous laquelle les vallées de montagne redeviennent herbeuses
+# (MONT_BASE = 46 : les fonds de vallée restent sous cette ligne), jitterée.
+const MONT_GRASS_LINE := 56
+static func _grass_line(gx : int, gz : int) -> int:
+	return MONT_GRASS_LINE + int(NOISES[PLAINES].get_noise_2d(gx * 5.0 + 999.0, gz * 5.0) * 3.0)
 
 # Plaques de glaciers sur les sommets enneigés.
 static func _glacier(gx : int, gz : int) -> bool:

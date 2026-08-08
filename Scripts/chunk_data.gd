@@ -4,28 +4,15 @@ extends RefCounted
 # (marge de 1 bloc comprise, coordonnées locales -1..taille) est une suite de
 # plages [id, longueur] démarrant à y = -1. Tout ce qui dépasse la dernière
 # plage est de l'air : la colonne est « coupée » à son dernier bloc plein
-# (extremity bound), donc un chunk de hauteur 256 ne stocke que ses ~20
+# (extremity bound), donc un chunk de hauteur 256 ne stocke que ses ~50
 # premiers mètres. Un chunk sans aucun bloc a des colonnes vides.
-#
-# LOD : au pas `step` (1, 2, 4… puissances de 2), le nœud couvre step×step
-# CHUNKS avec une grille FIXE de W×D cellules de step³ blocs (toutes les
-# coordonnées locales de cette classe sont alors en cellules) — un nœud
-# lointain du quadtree de streaming coûte le même maillage qu'un chunk.
-# `position` reste en coordonnées de CHUNKS (l'origine du nœud, alignée sur
-# step). Une cellule prend le MAX des 4 coins de hauteur : le terrain
-# grossier enveloppe le fin, les raccords entre niveaux se recouvrent au
-# lieu de se fissurer. Les colonnes de marge restent VIDES quand step > 1 :
-# le mesher émet alors tous les murs de bordure, ce qui bouche les fissures
-# restantes (surcoût invisible, les murs sont enfouis chez le voisin). Pas
-# d'arbres au-delà du pas 1.
 
 const W : int = WorldConfig.WIDTH
 const H : int = WorldConfig.HEIGHT
 const D : int = WorldConfig.DEPTH
 
 var chunk_position : Vector3i
-var step : int = 1          # taille d'une cellule en blocs (LOD)
-var w_cells : int = W       # dimensions de la grille en cellules
+var w_cells : int = W       # dimensions de la grille (fixes, lues par le mesher)
 var h_cells : int = H
 var d_cells : int = D
 var d2 : int = D + 2
@@ -35,26 +22,20 @@ var run_data : PackedInt32Array = PackedInt32Array()
 var run_start : PackedInt32Array = PackedInt32Array()
 var col_tops : PackedInt32Array = PackedInt32Array()  # sommet local du terrain par colonne, marge comprise
 var tree_blocks : Dictionary = {}
-var top_solid_y : int = -1  # plus haute cellule locale occupée (terrain ou arbre), marge comprise
+var top_solid_y : int = -1  # plus haut bloc local occupé (terrain ou arbre), marge comprise
 
 func col_index(x : int, z : int) -> int:
 	return (x + 1) * d2 + (z + 1)
 
-@warning_ignore("integer_division")
-func build(noise : FastNoiseLite, position : Vector3i, with_trees : bool, lod_step : int = 1) -> void:
+func build(noise : FastNoiseLite, position : Vector3i, with_trees : bool) -> void:
 	chunk_position = position
-	step = lod_step
-	w_cells = W          # grille toujours W×D cellules : le nœud grandit avec step
-	h_cells = H / step   # la hauteur du monde, elle, est fixe
-	d_cells = D
-	d2 = d_cells + 2
-	col_tops.resize((w_cells + 2) * d2)
-	run_start.resize((w_cells + 2) * d2 + 1)
+	col_tops.resize((W + 2) * d2)
+	run_start.resize((W + 2) * d2 + 1)
 	run_data.clear()
 	top_solid_y = -1
 	var base_y := position.y * H
 
-	tree_blocks = TreeGen.compute_tree_blocks(noise, position) if (with_trees and step == 1) else {}
+	tree_blocks = TreeGen.compute_tree_blocks(noise, position) if with_trees else {}
 
 	# blocs d'arbre regroupés par colonne : Vector2i(y local, id)
 	var tree_cols := {}
@@ -69,41 +50,17 @@ func build(noise : FastNoiseLite, position : Vector3i, with_trees : bool, lod_st
 			tree_cols[ci].append(Vector2i(ly, tree_blocks[pos]))
 
 	var ci := 0
-	for x in range(-1, w_cells + 1):
-		for z in range(-1, d_cells + 1):
+	for x in range(-1, W + 1):
+		for z in range(-1, D + 1):
 			run_start[ci] = run_data.size()
-			# LOD : marges vides -> le mesher émet tous les murs de bordure
-			if step > 1 and (x < 0 or x >= w_cells or z < 0 or z >= d_cells):
-				col_tops[ci] = -2
-				ci += 1
-				continue
-			var gx := position.x * W + x * step
-			var gz := position.z * D + z * step
+			var gx := position.x * W + x
+			var gz := position.z * D + z
 			var biome := TerrainHeight.biome_sample(noise, gx, gz)
-			var terrain_top : int
-			if step == 1:
-				terrain_top = TerrainHeight.height_at(noise, gx, gz) - base_y
-			else:
-				# max des 4 coins de la cellule, arrondi au nombre de cellules
-				var h := maxi(
-					maxi(TerrainHeight.height_at(noise, gx, gz),
-						TerrainHeight.height_at(noise, gx + step, gz)),
-					maxi(TerrainHeight.height_at(noise, gx, gz + step),
-						TerrainHeight.height_at(noise, gx + step, gz + step)))
-				terrain_top = roundi(float(h - base_y + 1) / step) - 1
+			var terrain_top := TerrainHeight.height_at(noise, gx, gz) - base_y
 			col_tops[ci] = terrain_top
-			var t := mini(terrain_top, h_cells - 1)
+			var t := mini(terrain_top, H - 1)
 
-			if step > 1:
-				# LOD : une seule plage, couleur du bloc de surface du biome
-				# (seul le dessus est visible de loin)
-				if t >= -1:
-					run_data.push_back(BiomeMap.surface_block(
-						noise.seed, gx, gz, biome, base_y + t * step))
-					run_data.push_back(t + 2)
-					if t > top_solid_y:
-						top_solid_y = t
-			elif not tree_cols.has(ci):
+			if not tree_cols.has(ci):
 				# strates du biome, du pied (y = -1) au sommet du terrain
 				if t >= -1:
 					for run in BiomeMap.strata(noise.seed, gx, gz, biome, base_y + t):
@@ -119,7 +76,7 @@ func build(noise : FastNoiseLite, position : Vector3i, with_trees : bool, lod_st
 			ci += 1
 	run_start[ci] = run_data.size()
 
-	top_solid_y = mini(top_solid_y, h_cells - 1)
+	top_solid_y = mini(top_solid_y, H - 1)
 
 # Colonne mixte terrain + arbre : reconstruite dans un petit tampon borné au
 # plus haut bloc, puis encodée en plages. Le terrain vient des strates du
@@ -159,8 +116,7 @@ func _encode_column_with_trees(terrain_top : int, terrain_runs : Array, cells : 
 		return span_top - trimmed
 	return span_top
 
-# Id du bloc en (x, y, z) locaux (en CELLULES au pas du LOD), marge -1..taille
-# comprise ; 0 = air.
+# Id du bloc en (x, y, z) locaux, marge -1..taille comprise ; 0 = air.
 func block_at(x : int, y : int, z : int) -> int:
 	var ci := col_index(x, z)
 	var i := run_start[ci]

@@ -40,6 +40,8 @@ uniform float stars_blink_variance_scale = 0.03;
 
 // ---- Aurore (aurora.wgsl) ------------------------------------------------
 uniform bool aurora_enabled = true;
+// intensité pilotée par SkyCycle selon le biome du joueur (fondu doux)
+uniform float aurora_amount : hint_range(0.0, 1.0) = 1.0;
 uniform vec4 aurora_bottom_color = vec4(0.0, 1.0, 0.2, 1.0);
 uniform vec4 aurora_top_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform float aurora_alpha = 0.7;
@@ -173,7 +175,7 @@ void sky() {
 	if (AT_QUARTER_RES_PASS) {
 		// passe basse résolution : seulement l'aurore
 		vec4 a = vec4(0.0);
-		if (aurora_enabled && !AT_CUBEMAP_PASS && night_visibility > 0.001) {
+		if (aurora_enabled && !AT_CUBEMAP_PASS && night_visibility * aurora_amount > 0.001) {
 			a = aurora(EYEDIR, TIME);
 		}
 		COLOR = a.rgb;
@@ -189,7 +191,7 @@ void sky() {
 				col += vec3(star_field(EYEDIR, TIME)) * night_visibility;
 			}
 			if (aurora_enabled) {
-				col += QUARTER_RES_COLOR.rgb * night_visibility;
+				col += QUARTER_RES_COLOR.rgb * night_visibility * aurora_amount;
 			}
 		}
 		COLOR = col;

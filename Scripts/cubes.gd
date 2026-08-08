@@ -87,7 +87,7 @@ func apply_generated_packed(chunk_data : ChunkData, packed : Dictionary) -> void
 	mat.shader = pulled_shader
 	mat.set_shader_parameter("rect_data", ImageTexture.create_from_image(packed["image"]))
 	mat.set_shader_parameter("quad_count", count)
-	mat.set_shader_parameter("cell_size", WorldConfig.CUBE_SIZE * chunk_data.step)
+	mat.set_shader_parameter("cell_size", WorldConfig.CUBE_SIZE)
 	mat.set_shader_parameter("block_size", WorldConfig.CUBE_SIZE)
 	mat.set_shader_parameter("chunk_span", WorldConfig.WIDTH * WorldConfig.CUBE_SIZE)
 	if show_borders:
@@ -95,10 +95,9 @@ func apply_generated_packed(chunk_data : ChunkData, packed : Dictionary) -> void
 	material_override = mat
 	self.mesh = _counter_mesh(count)
 	# les sommets du maillage compteur sont tous à zéro : l'AABB de culling
-	# doit couvrir l'emprise réelle du nœud (step×step chunks au LOD)
-	var s : int = chunk_data.step
+	# doit couvrir l'emprise réelle du chunk
 	custom_aabb = AABB(Vector3(-2, -2, -2),
-		Vector3(width * s + 4, height + 4, depth * s + 4) * cube_size)
+		Vector3(width + 4, height + 4, depth + 4) * cube_size)
 
 # Plus petit maillage compteur couvrant `count` rectangles (créé à la demande,
 # thread principal uniquement).

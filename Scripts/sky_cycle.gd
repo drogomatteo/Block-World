@@ -17,10 +17,11 @@ const SkyPresetScript = preload("res://Scripts/sky_preset.gd")
 @export var world_environment : WorldEnvironment
 
 @export_group("Durées (secondes)")
-@export var day_time_sec := 120.0
-@export var night_time_sec := 90.0
-@export var sunrise_time_sec := 12.0  # pris sur le jour
-@export var sunset_time_sec := 12.0   # pris sur la nuit
+# Cycle complet de 24 minutes : 14 min de jour + 10 min de nuit.
+@export var day_time_sec := 840.0
+@export var night_time_sec := 600.0
+@export var sunrise_time_sec := 60.0  # pris sur le jour
+@export var sunset_time_sec := 60.0   # pris sur la nuit
 
 @export_group("Réglages")
 @export var auto_tick := true
@@ -45,6 +46,10 @@ const SkyPresetScript = preload("res://Scripts/sky_preset.gd")
 @export var sun_disc_enabled := true
 @export var stars_enabled := true
 @export var aurora_enabled := true
+# Aurores : toujours au-dessus du biome neige ; ailleurs, une nuit sur trois
+# environ (tirage déterministe par nuit sur la seed du monde).
+@export var aurora_chance_elsewhere := 0.33
+@export var aurora_fade_speed := 0.25  # fondu de l'intensité, par seconde
 
 var time := 0.0
 
@@ -52,6 +57,10 @@ var _mat : ShaderMaterial
 var _timelines : Array = []   # 4 timelines [[offset, Color], ...] sur 0..1
 var _stop_colors : Array = [Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE]
 var _fast := false
+var _cycle := 0               # numéro de la nuit (tirage d'aurore)
+var _aurora_amount := 1.0
+var _aurora_goal := 1.0
+var _biome_wait := 0.0        # le biome du joueur est re-testé 2×/s
 
 func _ready() -> void:
 	if preset == null:
@@ -71,8 +80,37 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if auto_tick:
 		var scale := time_scale * (fast_forward_scale if _fast else 1.0)
-		time = fposmod(time + delta * scale, day_time_sec + night_time_sec)
+		var t := time + delta * scale
+		var cycle_len := day_time_sec + night_time_sec
+		if t >= cycle_len:
+			_cycle += 1  # nouvelle nuit -> nouveau tirage d'aurore
+		time = fposmod(t, cycle_len)
+	_update_aurora(delta)
 	_apply_time()
+
+# Intensité d'aurore selon le biome du joueur : 1 au-dessus de la neige,
+# sinon selon le tirage de la nuit courante ; fondu doux entre les deux.
+# Le biome est re-testé 2×/s (BiomeMap.biome_at = Worley pur, thread-safe).
+func _update_aurora(delta: float) -> void:
+	_biome_wait -= delta
+	if _biome_wait <= 0.0:
+		_biome_wait = 0.5
+		var main = get_parent()
+		if main != null and main.get("_noise") != null:
+			var seed_w : int = main._noise.seed
+			var cam : Camera3D = main.camera
+			if BiomeMap.biome_at(seed_w, cam.position.x, cam.position.z) == BiomeMap.NEIGE:
+				_aurora_goal = 1.0
+			else:
+				_aurora_goal = 1.0 if _night_roll(seed_w) < aurora_chance_elsewhere else 0.0
+	_aurora_amount = move_toward(_aurora_amount, _aurora_goal, aurora_fade_speed * delta)
+	_mat.set_shader_parameter("aurora_amount", _aurora_amount)
+
+# Tirage déterministe de la nuit courante (seed monde + numéro de cycle).
+func _night_roll(seed_w : int) -> float:
+	var h : int = seed_w + _cycle * 668265263
+	h = (h ^ (h >> 13)) * 1274126177
+	return float(h & 0xFFFF) / 65536.0
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo \

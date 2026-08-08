@@ -19,23 +19,25 @@ const DIRT : int = 5
 const ROCK : int = 6
 const SNOW : int = 7
 const ICE : int = 8
+const LEAVES_DARK : int = 9   # feuillage des sapins
+const LEAVES_LIME : int = 10  # variante jaune-vert des feuillus
 
 # Océan : le plan d'eau global (main.tscn/water.gdshader) affleure juste au
 # dessus de la face supérieure des colonnes de hauteur SEA_LEVEL - 1 ; une
-# colonne de hauteur >= SEA_LEVEL émerge.
-const SEA_LEVEL : int = 10
-# Montagnes : altitude où la terre laisse place à la neige et aux glaciers
-# (ligne jitterée par bruit dans BiomeMap.strata)
-const SNOW_LINE : int = 45
+# colonne de hauteur >= SEA_LEVEL émerge. La mer est HAUTE (40) pour laisser
+# ~35 blocs de profondeur aux océans (le fond du monde est à y = 0) — toutes
+# les bases terrestres de BiomeMap sont calées au-dessus.
+const SEA_LEVEL : int = 40
+# Montagnes : altitude où la pierre laisse place à la neige et aux glaciers
+# (ligne jitterée par bruit dans BiomeMap.strata) — pics jusqu'à ~165
+const SNOW_LINE : int = 100
 
 # Up-sampling du bruit : 1 échantillon tous les NOISE_STEP blocs,
 # interpolation bilinéaire entre les points (voir TerrainHeight)
 const NOISE_STEP : int = 4
 
-# Arbres : rares mais massifs — troncs hauts, large couronne étagée
-const TREE_CHANCE : float = 0.008
-const TRUNK_MIN : int = 6
-const TRUNK_MAX : int = 10
-const LEAF_RADIUS : int = 3
-# marge = rayon max du feuillage + 1 pour l'anneau de culling des faces
-const TREE_MARGIN : int = LEAF_RADIUS + 1
+# Arbres (silhouettes façon Cube World : feuillus à dôme, sapins à étages,
+# rares géants multi-lobes — voir TreeGen, densités dans CHANCE_BY_BIOME)
+# marge = portée horizontale max d'un feuillage (lobe de géant : branche 12
+# + rayon de lobe 5) + 1 pour l'anneau de culling des faces
+const TREE_MARGIN : int = 18

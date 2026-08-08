@@ -26,10 +26,10 @@ const FACE_TOP := 0
 const FACE_BOTTOM := 1
 const FACE_SIDE := 2
 
-# Ids alignés sur WorldConfig.GRASS..ICE ; les couleurs sont AUSSI recopiées
-# en dur dans chunk_pulled.gdshader (COLOR_TOP/COLOR_SIDE) — tenir les deux
-# tables synchronisées. Les ids tiennent sur 4 bits (clé des plans + format
-# compacté du vertex pulling).
+# Ids alignés sur WorldConfig.GRASS..LEAVES_LIME ; les couleurs sont AUSSI
+# recopiées en dur dans chunk_pulled.gdshader (COLOR_TOP/COLOR_SIDE) — tenir
+# les deux tables synchronisées. Les ids tiennent sur 4 bits (clé des plans +
+# format compacté du vertex pulling).
 const BLOCKS := {
 	0: {"name" : "Air", "solid" : false},
 	1: {"name" : "Grass", "solid" : true, "colors" : {FACE_TOP :Color(0.137, 0.902, 0.137, 1.0), FACE_BOTTOM : Color(0.137, 0.902, 0.137, 1.0), FACE_SIDE : Color(0.137, 0.902, 0.137, 1.0)}},
@@ -40,6 +40,8 @@ const BLOCKS := {
 	6: {"name" : "Rock", "solid" : true, "colors" : {FACE_TOP :Color(0.42, 0.42, 0.45, 1.0), FACE_BOTTOM : Color(0.42, 0.42, 0.45, 1.0), FACE_SIDE : Color(0.38, 0.38, 0.41, 1.0)}},
 	7: {"name" : "Snow", "solid" : true, "colors" : {FACE_TOP :Color(0.92, 0.94, 0.97, 1.0), FACE_BOTTOM : Color(0.92, 0.94, 0.97, 1.0), FACE_SIDE : Color(0.86, 0.88, 0.92, 1.0)}},
 	8: {"name" : "Ice", "solid" : true, "colors" : {FACE_TOP :Color(0.60, 0.80, 0.97, 1.0), FACE_BOTTOM : Color(0.60, 0.80, 0.97, 1.0), FACE_SIDE : Color(0.52, 0.72, 0.92, 1.0)}},
+	9: {"name" : "LeavesDark", "solid" : true, "colors" : {FACE_TOP :Color(0.09, 0.42, 0.16, 1.0), FACE_BOTTOM : Color(0.09, 0.42, 0.16, 1.0), FACE_SIDE : Color(0.07, 0.36, 0.13, 1.0)}},
+	10: {"name" : "LeavesLime", "solid" : true, "colors" : {FACE_TOP :Color(0.62, 0.76, 0.16, 1.0), FACE_BOTTOM : Color(0.62, 0.76, 0.16, 1.0), FACE_SIDE : Color(0.55, 0.68, 0.13, 1.0)}},
 }
 
 # L'ordre indexe les plans : 0 UP, 1 DOWN, 2 LEFT, 3 RIGHT, 4 FORWARD, 5 BACK
@@ -171,13 +173,11 @@ func _run(data : ChunkData) -> bool:
 			shaded.append(c)
 		_shaded[dir] = shaded
 
-	# grille en cellules : au pas de LOD 1, cellule = bloc ; au-delà, le même
-	# pipeline maille une grille réduite et les sommets sont mis à l'échelle
 	var W := data.w_cells
 	var D := data.d_cells
 	var D2 := data.d2
 	_dcells = D
-	_cell = WorldConfig.CUBE_SIZE * data.step
+	_cell = WorldConfig.CUBE_SIZE
 	var ncols := (W + 2) * D2
 	# nombre de mots par colonne : le bit b correspond à y = b - 1 (marge du
 	# dessous comprise), borné au plus haut bloc + 1 bit d'air au-dessus
