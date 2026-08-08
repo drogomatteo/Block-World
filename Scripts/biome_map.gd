@@ -55,7 +55,7 @@ const ISLAND_FULL := 0.5
 const ISLAND_AMP := 70.0
 const DESERT_BASE := 43.0
 const DESERT_AMP := 1.5
-const DUNE_AMP := 9.0         # hauteur des crêtes de dunes
+const DUNE_AMP := 15.0         # hauteur des crêtes de dunes
 
 # Taille d'une cellule de biome, en blocs (64 chunks) : des biomes MASSIFS —
 # le disque de rendu (rayon 3200) tient dans ~2 cellules, chaque biome est un

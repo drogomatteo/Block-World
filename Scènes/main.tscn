@@ -13,20 +13,61 @@ noise_type = 3
 frequency = 0.05
 
 [sub_resource type="NoiseTexture3D" id="NoiseTexture3D_noise"]
-seamless = true
 noise = SubResource("FastNoiseLite_perlin")
+seamless = true
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_voronoi"]
 noise_type = 2
 frequency = 0.08
-cellular_return_type = 1
 
 [sub_resource type="NoiseTexture3D" id="NoiseTexture3D_voronoi"]
-seamless = true
 noise = SubResource("FastNoiseLite_voronoi")
+seamless = true
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_sky"]
 shader = ExtResource("3_sky")
+shader_parameter/stop0_color = Color(0, 0.004, 0.17, 1)
+shader_parameter/stop1_color = Color(0.064, 0.082, 0.365, 1)
+shader_parameter/stop2_color = Color(0, 0.052, 0.419, 1)
+shader_parameter/stop3_color = Color(0.101, 0, 0.232, 1)
+shader_parameter/stop_positions = Vector4(0.38, 0.47, 0.61, 1)
+shader_parameter/sun_enabled = true
+shader_parameter/sun_color = Vector4(1, 1, 0.5, 1)
+shader_parameter/sun_strength = 1.5
+shader_parameter/sun_sharpness = 364.0
+shader_parameter/night_visibility = 0.0
+shader_parameter/stars_enabled = true
+shader_parameter/stars_rotation_speed = 0.01
+shader_parameter/stars_sample_scale = 9.0
+shader_parameter/stars_threshold = 0.9
+shader_parameter/stars_threshold_blink = 0.01
+shader_parameter/stars_blink_speed = 10.0
+shader_parameter/stars_mask_scale = 1.0
+shader_parameter/stars_mask_threshold = 0.4
+shader_parameter/stars_blink_variance_scale = 0.03
+shader_parameter/aurora_enabled = true
+shader_parameter/aurora_bottom_color = Vector4(0, 1, 0.2, 1)
+shader_parameter/aurora_top_color = Vector4(0, 1, 0.8, 1)
+shader_parameter/aurora_alpha = 0.7
+shader_parameter/aurora_density = 0.05
+shader_parameter/aurora_sharpness = 1.56
+shader_parameter/aurora_samples = 60
+shader_parameter/aurora_start_height = 3.1
+shader_parameter/aurora_end_height = 4.8
+shader_parameter/aurora_flow_scale = 0.002
+shader_parameter/aurora_flow_strength = 4.3
+shader_parameter/aurora_flow_speed = 0.005
+shader_parameter/aurora_flow_x_speed = -0.6
+shader_parameter/aurora_wiggle_scale = 0.03
+shader_parameter/aurora_wiggle_strength = 1.05
+shader_parameter/aurora_wiggle_speed = 0.1
+shader_parameter/aurora_sparkle_primary = Vector4(0, 2.3, 0, 1)
+shader_parameter/aurora_sparkle_secondary = Vector4(6.3, 0.2, 4, 1)
+shader_parameter/aurora_sparkle_scale = 0.004
+shader_parameter/aurora_sparkle_speed = 0.02
+shader_parameter/aurora_sparkle_threshold = 0.3
+shader_parameter/aurora_sparkle_max_height = 0.3
+shader_parameter/aurora_opacity_per_sample = 0.18
 shader_parameter/noise3_tex = SubResource("NoiseTexture3D_noise")
 shader_parameter/voronoi3_tex = SubResource("NoiseTexture3D_voronoi")
 
@@ -35,22 +76,30 @@ sky_material = SubResource("ShaderMaterial_sky")
 process_mode = 2
 radiance_size = 2
 
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_water"]
-shader = ExtResource("5_water")
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_water"]
-material = SubResource("ShaderMaterial_water")
-size = Vector2(8192, 8192)
-
 [sub_resource type="Environment" id="Environment_rkiyi"]
 background_mode = 2
 sky = SubResource("Sky_24a1y")
 fog_enabled = true
 fog_mode = 1
 fog_light_color = Color(0.6463, 0.6558, 0.6708, 1)
+fog_density = 1.0
 fog_sky_affect = 0.0
 fog_depth_begin = 232.0
 fog_depth_end = 464.0
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_water"]
+render_priority = 0
+shader = ExtResource("5_water")
+shader_parameter/shallow_color = Color(0.13, 0.55, 0.64, 1)
+shader_parameter/deep_color = Color(0.02, 0.18, 0.38, 1)
+shader_parameter/base_alpha = 0.72
+shader_parameter/wave_scale = 0.045
+shader_parameter/wave_speed = 0.35
+shader_parameter/wave_strength = 0.45
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_water"]
+material = SubResource("ShaderMaterial_water")
+size = Vector2(8192, 8192)
 
 [node name="main" type="Node3D" unique_id=1020671658]
 script = ExtResource("1_mijtf")
@@ -63,17 +112,17 @@ script = ExtResource("2_orbit")
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=130495272]
 environment = SubResource("Environment_rkiyi")
 
-[node name="Water" type="MeshInstance3D" parent="."]
+[node name="Water" type="MeshInstance3D" parent="." unique_id=1023040682]
 mesh = SubResource("PlaneMesh_water")
 
-[node name="Sun" type="DirectionalLight3D" parent="."]
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=2111747249]
 
-[node name="SkyCycle" type="Node" parent="." node_paths=PackedStringArray("sun", "world_environment")]
+[node name="SkyCycle" type="Node" parent="." unique_id=153605939 node_paths=PackedStringArray("sun", "world_environment")]
 script = ExtResource("4_cycle")
 sun = NodePath("../Sun")
 world_environment = NodePath("../WorldEnvironment")
 
-[node name="Terminal" type="CanvasLayer" parent="."]
+[node name="Terminal" type="CanvasLayer" parent="." unique_id=2009101354]
 script = ExtResource("6_term")
 
 [node name="Minimap" type="CanvasLayer" parent="."]

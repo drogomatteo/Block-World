@@ -12,8 +12,8 @@ const CHUNCK_SCENE = preload("res://Scènes/Cubes/Cubes.tscn")
 # Brouillard dynamique : opaque juste avant le chunk MANQUANT le plus proche
 # de la caméra — il colle à la frontière de génération au chargement ou en
 # vol rapide, puis s'ouvre quand elle s'éloigne.
-@export var fog_expand_speed : float = 96.0     # m/s à l'ouverture
-@export var fog_contract_speed : float = 600.0  # m/s à la fermeture
+@export var fog_expand_speed : float = 20.0     # m/s à l'ouverture
+@export var fog_contract_speed : float = 100.0  # m/s à la fermeture
 
 @onready var camera : Camera3D = $Camera3D
 @onready var water : MeshInstance3D = $Water
